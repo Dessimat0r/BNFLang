@@ -1,0 +1,70 @@
+// x86-64 assembly → Mach-O binary
+// Uses: CHR, ORD, INT, MOD, DIV, GET, SET, IF, JOIN, RULE, + - * /
+
+@def LE32(n):
+    CHR(MOD(n, 256)) + CHR(MOD(DIV(n, 256), 256))
+    + CHR(MOD(DIV(DIV(n, 256), 256), 256))
+    + CHR(MOD(DIV(DIV(DIV(n, 256), 256), 256), 256))
+
+@def EMIT(sz, bs):
+    LET(_, SET("pos", GET("pos") + sz),
+    SET("bytes", GET("bytes") + bs))
+
+@def JUMP(lb, sz, op):
+    LET(pos, GET("pos"),
+    LET(_, SET("pos", pos + sz),
+    LET(_, SET("fixups", GET("fixups") + lb + "," + pos + "," + sz + ";"),
+    SET("bytes", GET("bytes") + op + CHR(0) + CHR(0) + CHR(0) + CHR(0))))
+
+Program ::= Init Line*:lines => MACHO(lines)
+
+Init ::= => LET(_, SET("fixups", ""),
+            LET(_, SET("data_bytes", ""),
+              LET(_, SET("pos", 0),
+                SET("bytes", ""))))
+
+Line ::=
+    Instruction:instr => instr
+  | Label:lbl         => ""
+  | /\.data/          => SET("section", "data")
+  | /\.text/          => SET("section", "text")
+  | /\.globl\s+\S+/   => ""
+  | /\.intel_syntax\s+\S+/ => ""
+  | /\.asciz\s+"[^"]*"/:s => ASCIZ(s + "\n")
+  | /#.*/             => ""
+  | /[\s]*/           => ""
+
+Label ::= /[a-zA-Z_.]\w*/:name ":"
+    => LET(_, SET(name, GET("pos")), "")
+
+Instruction ::=
+    "push rbp"                           => EMIT(1, CHR(85))
+  | "mov rbp, rsp"                       => EMIT(3, CHR(72) + CHR(137) + CHR(229))
+  | "sub rsp, " /[0-9]+/:n               => EMIT(4, CHR(72) + CHR(131) + CHR(236) + CHR(INT(n)))
+  | "mov eax, " /[0-9]+/:n               => EMIT(5, CHR(184) + LE32(INT(n)))
+  | "mov DWORD PTR [rbp-" /[0-9]+/:n "], eax" => EMIT(3, CHR(137) + CHR(69) + CHR(INT(n)))
+  | "mov eax, [rbp-" /[0-9]+/:n "]"       => EMIT(3, CHR(139) + CHR(69) + CHR(INT(n)))
+  | "push rax"                           => EMIT(1, CHR(80))
+  | "pop rcx"                            => EMIT(1, CHR(89))
+  | "cmp ecx, eax"                       => EMIT(2, CHR(57) + CHR(193))
+  | "cmp eax, 0"                         => EMIT(3, CHR(131) + CHR(248) + CHR(0))
+  | "setl al"                            => EMIT(3, CHR(15) + CHR(156) + CHR(192))
+  | "movzx eax, al"                      => EMIT(3, CHR(15) + CHR(182) + CHR(192))
+  | "je " /[.a-zA-Z_0-9]+/:label         => JUMP(label, 6, CHR(15) + CHR(132))
+  | "jmp " /[.a-zA-Z_0-9]+/:label         => JUMP(label, 5, CHR(233))
+  | "mov esi, eax"                       => EMIT(2, CHR(137) + CHR(198))
+  | "lea rdi, [rip + fmt]"               => JUMP("fmt", 7, CHR(72) + CHR(141) + CHR(61))
+  | "xor eax, eax"                       => EMIT(2, CHR(49) + CHR(192))
+  | "call _printf"                        => JUMP("_printf", 5, CHR(232))
+  | "add eax, ecx"                       => EMIT(2, CHR(1) + CHR(200))
+  | "mov DWORD PTR [rbp-" /[0-9]+/:n "], eax" => EMIT(3, CHR(137) + CHR(69) + CHR(INT(n)))
+  | "mov rsp, rbp"                       => EMIT(3, CHR(72) + CHR(137) + CHR(236))
+  | "pop rbp"                            => EMIT(1, CHR(93))
+  | "ret"                                => EMIT(1, CHR(195))
+
+// Built-in primitives in engine:
+// CHR(n) → 1-char string, ORD(s) → int code point
+// INT(s) → int, MOD(a,b), DIV(a,b), JOIN(list,sep)
+// GET(k), SET(k,v), IF(c,a,b)
+// RULE(name, input) → invoke grammar rule on text
+// MACHO(lines) → wrap byte buffer in Mach-O binary

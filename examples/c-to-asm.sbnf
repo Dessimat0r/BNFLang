@@ -1,0 +1,95 @@
+// C-like → x86-64 asm. Engine: PEG + LET RULE REPLACE.
+// State: "nxt\x00inits\x00code"
+// Variable annotations: name@offset  (e.g. n@4)
+// Scoping: block bodies are isolated text strings, REPLACE inside them
+//          cannot leak to outer scopes. Inner declarations annotated
+//          independently within their block's own remaining code.
+
+Program ::= /[\s\S]*/:src
+    => RULE("Decls", "4\x00\x00" + src)
+
+// ── Declaration phase ─────────────────────────────────────────────────────
+
+Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
+    => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
+
+TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
+    => LET(new_n, RULE("Add", n, "4"),
+       LET(anno, v + "@" + n,
+       LET(new_i, i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n",
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
+    => ".data\nfmt: .asciz \"%d\\n\"\n"
+     + ".text\n.globl _main\n.intel_syntax noprefix\n"
+     + "_main:\npush rbp\nmov rbp, rsp\nsub rsp, " + n + "\n"
+     + i
+     + RULE("Stmts", "0\x00" + c)
+     + "mov rsp, rbp\npop rbp\nret\n"
+
+// ── Statement phase ──────────────────────────────────────────────────────
+
+Stmts ::= /[0-9]+/:lc "\x00" /[\s\S]*/:code
+    => RULE("S", lc + "\x00" + code)
+
+S ::= /[0-9]+/:lc "\x00" "while" "(" /[^)]+/:cond ")" "{" /[^}]+/:body "}" "\n" /[\s\S]*/:rest
+    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", lc + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" "while" "(" /[^)]+/:cond ")" "{" /[^}]+/:body "}"
+    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
+  | /[0-9]+/:lc "\x00" Stmt:first "\n" /[\s\S]*/:rest
+    => first + "\n" + RULE("S", lc + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" Stmt:last
+    => last
+  | => ""
+
+Stmt ::=
+    /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";"
+    => LET(off, RULE("OffOf", name + "\x00" + val),
+       RULE("Expr", val) + "\nmov DWORD PTR [rbp-" + off + "], eax")
+  | "print" /[^;]+/:val ";"
+    => RULE("Expr", val) + "\nmov esi, eax\nlea rdi, [rip + fmt]\nxor eax, eax\ncall _printf"
+  | "{" => ""
+  | "}" => ""
+  | /[\s]+/:ws => ""
+  | /./:c => c
+
+OffOf ::= /[^@]+/:name "@" /[0-9]+/:off "\x00" /[\s\S]*/:rest => off
+        | /[a-zA-Z_]\w*/:name "\x00" /[\s\S]*/:rest => name
+
+GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[^}]+/:body
+    => ".L" + lc + ":\n"
+     + RULE("Expr", cond) + "\ncmp eax, 0\nje .L" + RULE("Inc", lc) + "\n"
+     + RULE("Stmts", lc + "\x00" + body) + "\n"
+     + "jmp .L" + lc + "\n.L" + RULE("Inc", lc) + ":\n"
+
+// ── Expression rules (proper precedence: Compare > AddExpr > Primary) ─────
+
+Expr ::= /[\s\S]+/:s => RULE("Compare", s)
+
+Compare ::= /[^<]+/:l "<" /[\s\S]+/:r
+    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetl al\nmovzx eax, al"
+  | /[\s\S]+/:s => RULE("AddExpr", s)
+
+AddExpr ::= /[^+]+/:l "+" /[\s\S]+/:r
+    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nadd eax, ecx"
+  | /[\s\S]+/:s => RULE("Primary", s)
+
+Primary ::= /[0-9]+/:n => "mov eax, " + n
+          | /[a-zA-Z_@0-9]+/:name => RULE("AnnotatedVar", name)
+          | "(" /[^)]+/:e ")" => RULE("Expr", e)
+
+AnnotatedVar ::= /[^@]+/:name "@" /[0-9]+/:off => "mov eax, [rbp-" + off + "]"
+               | /[a-zA-Z_]\w*/:name => "mov eax, [rbp-" + name + "]"
+
+// ── Arithmetic (reversal + carry) ─────────────────────────────────────────
+
+Inc ::= /[0-9]+/:n => RULE("Rev", RULE("IncR", RULE("Rev", n)))
+IncR ::= /[0-8]/:d /.*/:r => RULE("IncD", d) + r | "9" /.*/:r => "0" + RULE("IncR", r) | => "1"
+IncD ::= "0" => "1" | "1" => "2" | "2" => "3" | "3" => "4"
+       | "4" => "5" | "5" => "6" | "6" => "7" | "7" => "8" | "8" => "9"
+Dec ::= /[0-9]+/:n => RULE("Rev", RULE("DecR", RULE("Rev", n)))
+DecR ::= /[1-9]/:d /.*/:r => RULE("DecD", d) + r | "0" /.*/:r => "9" + RULE("DecR", r) | /[0-9]+/:n => n
+DecD ::= "1" => "0" | "2" => "1" | "3" => "2" | "4" => "3"
+       | "5" => "4" | "6" => "5" | "7" => "6" | "8" => "7" | "9" => "8"
+Rev ::= /./:c /.*/:r => RULE("Rev", r) + c | /./:c => c | => ""
+Add ::= /[0-9]+/:a "\x1f" "0" => a
+       | /[0-9]+/:a "\x1f" /[0-9]+/:b => RULE("Add", RULE("Inc", a) + "\x1f" + RULE("Dec", b))

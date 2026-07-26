@@ -1,0 +1,22 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+*.s
+*.bin
+*.o
+
+# Compiled executables
+examples/counter
+examples/scope
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
