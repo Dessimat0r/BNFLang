@@ -91,7 +91,7 @@ WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest
 
 GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
     => ".L" + lc + ":\n"
-     + RULE("Expr", cond) + "\ncmp eax, 0\nje .L" + (lc + "1") + "\n"
+     + RULE("Expr", cond) + "\ntest eax, eax\nje .L" + (lc + "1") + "\n"
      + RULE("Stmts", (lc + "2") + "\x00" + body) + "\n"
      + "jmp .L" + lc + "\n.L" + (lc + "1") + ":\n"
 
@@ -111,11 +111,11 @@ AddExpr ::= /(?:[^+(\-]+|\([^)]*\))+/:l "+" "0" => RULE("Expr", l)
           | /(?:[^+(\-]+|\([^)]*\))+/:l "+" "1" => RULE("Expr", l) + "\ninc eax"
           | /(?:[^+(\-]+|\([^)]*\))+/:l "-" "1" => RULE("Expr", l) + "\ndec eax"
           | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[0-9]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nadd eax, ecx"
+    => RULE("Expr", l) + "\nadd eax, " + r
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[0-9]+/:r
+    => RULE("Expr", l) + "\nsub eax, " + r
           | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[a-zA-Z_@0-9]+/:r
     => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nadd eax, ecx"
-          | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[0-9]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nsub eax, ecx"
           | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[a-zA-Z_@0-9]+/:r
     => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nsub eax, ecx"
           | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[\s\S]+/:r
@@ -130,6 +130,9 @@ MulExpr ::= /(?:[^*/(]+|\([^)]*\))+/:l "*" "0" => "xor eax, eax"
           | "1" "*" /(?:[^*/(]+|\([^)]*\))+/:r => RULE("Expr", r)
           | /(?:[^/(]+|\([^)]*\))+/:l "/" "1" => RULE("Expr", l)
           | "0" "/" /(?:[^/(]+|\([^)]*\))+/:r => "xor eax, eax"
+          | /(?:[^*/(]+|\([^)]*\))+/:l "*" "2" => RULE("Expr", l) + "\nadd eax, eax"
+          | /(?:[^*/(]+|\([^)]*\))+/:l "*" "4" => RULE("Expr", l) + "\nshl eax, 2"
+          | /(?:[^*/(]+|\([^)]*\))+/:l "*" "8" => RULE("Expr", l) + "\nshl eax, 3"
           | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[0-9]+/:r
     => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nimul eax, ecx"
           | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[a-zA-Z_@0-9]+/:r
