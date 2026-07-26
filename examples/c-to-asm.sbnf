@@ -26,10 +26,10 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "
     => LET(new_n, n + "8",
        LET(anno, v + "@" + n,
        RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
+  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[0-9]+/:val ";" "\n" /[\s\S]*/:c
     => LET(new_n, n + "8",
        LET(anno, v + "@" + n,
-       LET(new_i, i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n",
+       LET(new_i, i + "mov DWORD PTR [rbp-" + n + "], " + val + "\n",
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => LET(new_n, n + "8",
@@ -108,18 +108,36 @@ Compare ::= /[^<]+/:l "<=" /[\s\S]+/:r
 AddExpr ::= /(?:[^+(\-]+|\([^)]*\))+/:l "+" "0" => RULE("Expr", l)
           | "0" "+" /(?:[^+(\-]+|\([^)]*\))+/:r => RULE("Expr", r)
           | /(?:[^+(\-]+|\([^)]*\))+/:l "-" "0" => RULE("Expr", l)
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "+" "1" => RULE("Expr", l) + "\ninc eax"
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "-" "1" => RULE("Expr", l) + "\ndec eax"
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nadd eax, ecx"
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[a-zA-Z_@0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nadd eax, ecx"
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nsub eax, ecx"
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[a-zA-Z_@0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nsub eax, ecx"
           | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nadd eax, ecx"
   | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\nsub eax, ecx"
   | /[\s\S]+/:s => RULE("MulExpr", s)
 
-MulExpr ::= /(?:[^*/(]+|\([^)]*\))+/:l "*" "0" => "mov eax, 0"
+MulExpr ::= /(?:[^*/(]+|\([^)]*\))+/:l "*" "0" => "xor eax, eax"
           | /(?:[^*/(]+|\([^)]*\))+/:l "*" "1" => RULE("Expr", l)
-          | "0" "*" /(?:[^*/(]+|\([^)]*\))+/:r => "mov eax, 0"
+          | "0" "*" /(?:[^*/(]+|\([^)]*\))+/:r => "xor eax, eax"
           | "1" "*" /(?:[^*/(]+|\([^)]*\))+/:r => RULE("Expr", r)
           | /(?:[^/(]+|\([^)]*\))+/:l "/" "1" => RULE("Expr", l)
-          | "0" "/" /(?:[^/(]+|\([^)]*\))+/:r => "mov eax, 0"
+          | "0" "/" /(?:[^/(]+|\([^)]*\))+/:r => "xor eax, eax"
+          | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nimul eax, ecx"
+          | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[a-zA-Z_@0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nimul eax, ecx"
+          | /(?:[^/(]+|\([^)]*\))+/:l "/" /[0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncdq\nidiv ecx"
+          | /(?:[^/(]+|\([^)]*\))+/:l "/" /[a-zA-Z_@0-9]+/:r
+    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncdq\nidiv ecx"
           | /(?:[^/(]+|\([^)]*\))+/:l "/" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
   | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[\s\S]+/:r
@@ -129,6 +147,7 @@ MulExpr ::= /(?:[^*/(]+|\([^)]*\))+/:l "*" "0" => "mov eax, 0"
 Primary ::= "(" /(?:[^()]+|\([^)]*\))*/:e ")" => RULE("Expr", e)
           | "&" /[a-zA-Z_@0-9]+/:name => RULE("AddrOf", name)
           | "*" PtrChain:inner => inner + "\nmov eax, [rax]"
+          | "0" => "xor eax, eax"
           | /[0-9]+/:n => "mov eax, " + n
           | /[a-zA-Z_@0-9]+/:name => RULE("AnnotatedVar", name)
 

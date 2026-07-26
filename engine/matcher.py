@@ -31,7 +31,7 @@ def _rule(g, name, text, pos, state, scope):
                 if _is_catchall(alt):
                     fallback_r, fallback_p, fallback_state = r, p, dict(state)
                 else:
-                    cost = len(str(r))
+                    cost = str(r).count('\n')
                     if best_r is None or p > best_p or (p == best_p and cost < best_cost):
                         best_r, best_p, best_cost, best_state = r, p, cost, dict(state)
         if best_r is not None:
