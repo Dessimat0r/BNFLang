@@ -1,5 +1,5 @@
-// C-like → x86-64 asm. Engine: PEG + LET RULE REPLACE.
-// State: "nxt\x00inits\x00code"
+// C-like → ARM64 assembly (Apple Silicon, macOS)
+// Engine: PEG + LET RULE REPLACE.
 // Operators: + - * / < <=
 
 Program ::= /[\s\S]*/:src
@@ -14,13 +14,13 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "
     => LET(new_n, n + "8",
        LET(ref_off, RULE("OffOfPtr", ref),
        LET(anno, v + "@" + n,
-       LET(new_i, i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n",
+       LET(new_i, i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n",
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
     => LET(new_n, n + "8",
        LET(ref_off, RULE("OffOfPtr", ref),
        LET(anno, v + "@" + n,
-       LET(new_i, i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n",
+       LET(new_i, i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n",
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c
     => LET(new_n, n + "8",
@@ -29,20 +29,15 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => LET(new_n, n + "8",
        LET(anno, v + "@" + n,
-       LET(new_i, i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n",
-       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8",
-       LET(anno, v + "@" + n,
-       LET(new_i, i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n",
+       LET(new_i, i + "mov w0, " + val + "\nstr w0, [x29, #-" + n + "]\n",
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
-     + ".text\n.globl _main\n.intel_syntax noprefix\n"
-     + "_main:\npush rbp\nmov rbp, rsp\nsub rsp, " + n + "\n"
+     + ".text\n.globl _main\n"
+     + "_main:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + RULE("Ceil16", n) + "\n"
      + i
      + RULE("Stmts", "0\x00" + c)
-     + "mov rsp, rbp\npop rbp\nret\n"
+     + "mov sp, x29\nldp x29, x30, [sp], #16\nret\n"
 
 // ── Statement phase ──────────────────────────────────────────────────────
 
@@ -61,19 +56,19 @@ S ::= /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\([^)]*\))+/:cond ")" "{" WhileB
 
 Stmt ::=
     "println" ";"
-    => "lea rdi, [rip + fmt_nl]\nxor eax, eax\ncall _printf"
+    => "adrp x0, fmt_nl@PAGE\nadd x0, x0, fmt_nl@PAGEOFF\nbl _printf"
   | "printsp" ";"
-    => "lea rdi, [rip + fmt_sp]\nxor eax, eax\ncall _printf"
+    => "adrp x0, fmt_sp@PAGE\nadd x0, x0, fmt_sp@PAGEOFF\nbl _printf"
   | "printn" /[^;]+/:val ";"
-    => RULE("Expr", val) + "\nmov esi, eax\nlea rdi, [rip + fmtn]\nxor eax, eax\ncall _printf"
+    => RULE("Expr", val) + "\nstr x0, [sp]\nadrp x0, fmtn@PAGE\nadd x0, x0, fmtn@PAGEOFF\nbl _printf"
   | "print" /[^;]+/:val ";"
-    => RULE("Expr", val) + "\nmov esi, eax\nlea rdi, [rip + fmt]\nxor eax, eax\ncall _printf"
+    => RULE("Expr", val) + "\nstr x0, [sp]\nadrp x0, fmt@PAGE\nadd x0, x0, fmt@PAGEOFF\nbl _printf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => LET(val_asm, RULE("Expr", val),
-       ptr + "\npush rax\n" + val_asm + "\npop rcx\nmov DWORD PTR [rcx], eax")
+       ptr + "\nstr x0, [sp, #-16]!\n" + val_asm + "\nldr x1, [sp], #16\nstr w0, [x1]")
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";"
     => LET(off, RULE("OffOf", name + "\x00" + val),
-       RULE("Expr", val) + "\nmov DWORD PTR [rbp-" + off + "], eax")
+       RULE("Expr", val) + "\nstr w0, [x29, #-" + off + "]")
   | "{" => ""
   | "}" => ""
   | /[\s]+/:ws => ""
@@ -84,54 +79,59 @@ OffOf ::= /[^@]+/:name "@" /[0-9]+/:off "\x00" /[\s\S]*/:rest => off
 
 // ── While loop ───────────────────────────────────────────────────────────
 
-// Recursive brace matcher — handles nested { }
 WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest
             | "{" WhileBody:inner "}" WhileBody:rest => "{" + inner + "}" + rest
             | => ""
 
 GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
     => ".L" + lc + ":\n"
-     + RULE("Expr", cond) + "\ncmp eax, 0\nje .L" + (lc + "1") + "\n"
+     + RULE("Expr", cond) + "\ncbz w0, .L" + (lc + "1") + "\n"
      + RULE("Stmts", (lc + "2") + "\x00" + body) + "\n"
-     + "jmp .L" + lc + "\n.L" + (lc + "1") + ":\n"
+     + "b .L" + lc + "\n.L" + (lc + "1") + ":\n"
 
-// ── Expression rules (precedence: Compare > AddExpr > MulExpr > Primary) ──
+// ── Expression rules ─────────────────────────────────────────────────────
 
 Expr ::= /[\s\S]+/:s => RULE("Compare", s)
 
 Compare ::= /[^<]+/:l "<=" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetle al\nmovzx eax, al"
+    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\ncmp w1, w0\ncset w0, le"
   | /[^<]+/:l "<" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetl al\nmovzx eax, al"
+    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\ncmp w1, w0\ncset w0, lt"
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
 AddExpr ::= /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nadd eax, ecx"
+    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nadd w0, w1, w0"
   | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\nsub eax, ecx"
+    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nsub w0, w1, w0"
   | /[\s\S]+/:s => RULE("MulExpr", s)
 
 MulExpr ::= /(?:[^/(]+|\([^)]*\))+/:l "/" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
+    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nsdiv w0, w1, w0"
   | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nimul eax, ecx"
+    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nmul w0, w1, w0"
   | /[\s\S]+/:s => RULE("Primary", s)
   | /[\s\S]+/:s => RULE("Primary", s)
 
 Primary ::= "(" /(?:[^()]+|\([^)]*\))*/:e ")" => RULE("Expr", e)
           | "&" /[a-zA-Z_@0-9]+/:name => RULE("AddrOf", name)
-          | "*" PtrChain:inner => inner + "\nmov eax, [rax]"
-          | /[0-9]+/:n => "mov eax, " + n
+          | "*" PtrChain:inner => inner + "\nldr w0, [x0]"
+          | /[0-9]+/:n => "mov w0, " + n
           | /[a-zA-Z_@0-9]+/:name => RULE("AnnotatedVar", name)
 
 PtrChain ::= /[a-zA-Z_@0-9]+/:name => RULE("LoadQWord", name)
-           | "*" PtrChain:inner => inner + "\nmov rax, [rax]"
+           | "*" PtrChain:inner => inner + "\nldr x0, [x0]"
 
-AnnotatedVar ::= /[^@]+/:name "@" /[0-9]+/:off => "mov eax, DWORD PTR [rbp-" + off + "]"
-               | /[a-zA-Z_]\w*/:name => "mov eax, DWORD PTR [rbp-" + name + "]"
+AnnotatedVar ::= /[^@]+/:name "@" /[0-9]+/:off => "ldr w0, [x29, #-" + off + "]"
+               | /[a-zA-Z_]\w*/:name => "ldr w0, [x29, #-" + name + "]"
 
-LoadQWord ::= /[^@]+/:name "@" /[0-9]+/:off => "mov rax, QWORD PTR [rbp-" + off + "]"
-            | /[a-zA-Z_]\w*/:name => "mov rax, QWORD PTR [rbp-" + name + "]"
+LoadQWord ::= /[^@]+/:name "@" /[0-9]+/:off => "ldr x0, [x29, #-" + off + "]"
+            | /[a-zA-Z_]\w*/:name => "ldr x0, [x29, #-" + name + "]"
 
-AddrOf ::= /[^@]+/:name "@" /[0-9]+/:off => "lea rax, [rbp-" + off + "]"
+AddrOf ::= /[^@]+/:name "@" /[0-9]+/:off => "sub x0, x29, #" + off
 OffOfPtr ::= /[^@]+/:name "@" /[0-9]+/:off => off
+
+Ceil16 ::= "64" => "64" | "60" => "64" | "56" => "64" | "52" => "64"
+         | "48" => "48" | "44" => "48" | "40" => "48" | "36" => "48"
+         | "32" => "32" | "28" => "32" | "24" => "32" | "20" => "32"
+         | "16" => "16" | "12" => "16" | "8" => "16" | "4" => "16"
+         | "0" => "0" | /[0-9]+/:n => n

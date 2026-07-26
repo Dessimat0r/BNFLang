@@ -57,6 +57,7 @@ Variable offsets and label counters are embedded in the text itself and threaded
 - Before committing: `git status`, `git diff`, `git log --oneline -5`.
 - Stage only intended files. Write concise commit messages matching repo style.
 - Before any commit, ensure git identity is set: `git config user.name "Chris Dennett" && git config user.email "dessimat0r@gmail.com"`.
+- Write comprehensive tests covering the change before committing.
 - Run `make test` before pushing to verify nothing is broken.
 
 ## Verified test outputs
@@ -69,5 +70,15 @@ scope:   10\n0\n1\n2\n      — block-scoped variable + outer while loop
 - `.sbnf` files contain the grammar; `.c` files are test inputs
 - Target assembly syntax: GAS `.intel_syntax noprefix` with `.data`/`.text` sections
 - Variable names annotated with `@N` during declaration processing (e.g., `i@8`)
-- Arithmetic helpers (`Inc`, `Dec`, `Add`) defined as grammar rules using decimal reversal + carry
+- `print expr;` prints with newline; `printn expr;` prints without newline (trailing space); `println;` prints just a newline
+
+## Verified test outputs
+```
+counter: 0\n1\n2\n3\n4\n   — loops 0..4 with while (i < n)
+scope:   10\n0\n1\n2\n      — block-scoped variable + outer while loop
+pascal:  formatted triangle    — nested loops, *, /, (, ) operators
+pointer: 5\n4\n3\n           — & and * operators, pointer write through
+dptr:    5\n42\n             — double pointers **pp, deref chain through pp→p→n
+
+
 - `Add` uses repeated Inc/Dec (O(b)). Fine for small `b` (always 4 in this codebase). For general use, replace with column addition (digit-by-digit with carry table).

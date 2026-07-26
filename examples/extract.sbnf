@@ -1,9 +1,0 @@
-// Stage 1: extract declarations from C source
-// "\n" matches newlines via NEWLINE pattern type (bypasses _ws)
-
-Program ::= Decl*:decls Code:code => JOIN(decls, "\n") + "\n\nCODE:\n" + code
-
-Decl ::= "int" /[a-zA-Z_]\w*/:name ("=" /[^;]+/:val)? ";" "\n"
-    => "DECL:" + name + ":" + val
-
-Code ::= /[\s\S]*/:text => text

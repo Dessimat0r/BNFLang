@@ -160,9 +160,19 @@ def split_alternatives(text):
             instr = not instr; cur.append(ch)
         elif ch == '/' and not instr:
             cur.append(ch); i += 1
-            while i < len(text) and text[i] != '/':
-                cur.append(text[i]); i += 1
-            if i < len(text): cur.append('/')
+            in_bracket = False
+            while i < len(text):
+                if text[i] == '[' and not in_bracket:
+                    in_bracket = True; cur.append(text[i]); i += 1
+                elif text[i] == ']' and in_bracket:
+                    in_bracket = False; cur.append(text[i]); i += 1
+                elif text[i] == '/' and not in_bracket:
+                    cur.append('/'); break  # i += 1 at loop bottom handles this
+                elif text[i] == '\\' and in_bracket:
+                    cur.append(text[i]); i += 1
+                    if i < len(text): cur.append(text[i]); i += 1
+                else:
+                    cur.append(text[i]); i += 1
         elif not instr:
             if ch == '(':
                 depth += 1; cur.append(ch)
@@ -182,7 +192,7 @@ def split_alternatives(text):
 # ── Pattern parsing ─────────────────────────────────────────────────────────
 
 RE_TERM = re.compile(r'^"((?:[^"\\]|\\.)*)"')
-RE_REGX = re.compile(r'^/((?:[^/\\]|\\.)*)/')
+RE_REGX = re.compile(r'^/((?:[^/\\\[]|\[[^\]]*\]|\\.)*)/')
 RE_ID   = re.compile(r'^([a-zA-Z_]\w*)')
 
 def read_label(text, i):
@@ -303,8 +313,19 @@ def split_args(text):
             instr = not instr; cur.append(ch)
         elif ch == '/' and not instr:
             cur.append(ch); i += 1
-            while i < len(text) and text[i] != '/': cur.append(text[i]); i += 1
-            if i < len(text): cur.append('/')
+            in_bracket = False
+            while i < len(text):
+                if text[i] == '[' and not in_bracket:
+                    in_bracket = True; cur.append(text[i]); i += 1
+                elif text[i] == ']' and in_bracket:
+                    in_bracket = False; cur.append(text[i]); i += 1
+                elif text[i] == '/' and not in_bracket:
+                    cur.append('/'); break  # i += 1 at loop bottom handles this
+                elif text[i] == '\\' and in_bracket:
+                    cur.append(text[i]); i += 1
+                    if i < len(text): cur.append(text[i]); i += 1
+                else:
+                    cur.append(text[i]); i += 1
         elif not instr:
             if ch == '(':
                 depth += 1
@@ -336,9 +357,18 @@ def parse_expr(text):
         if ch == '"' and (i == 0 or text[i-1] != '\\'):
             instr = not instr; i += 1; continue
         if ch == '/' and not instr:
-            i += 1
-            while i < len(text) and text[i] != '/': i += 1
-            i += 1; continue
+            i += 1; in_bracket = False
+            while i < len(text):
+                if text[i] == '[' and not in_bracket:
+                    in_bracket = True; i += 1
+                elif text[i] == ']' and in_bracket:
+                    in_bracket = False; i += 1
+                elif text[i] == '/' and not in_bracket:
+                    i += 1; break
+                elif text[i] == '\\' and in_bracket:
+                    i += 2
+                else: i += 1
+            continue
         if not instr:
             if ch == '(':
                 depth += 1
@@ -351,6 +381,12 @@ def parse_expr(text):
                         'left': parse_expr(left),
                         'right': parse_expr(right)}
         i += 1
+    # Parenthesized sub-expression
+    if text.startswith('(') and text.endswith(')'):
+        inner = text[1:-1].strip()
+        if inner and not inner.startswith('('):
+            return parse_expr(inner)
+
     # No + → LET, IF, function call, literal, or label
     m = re.match(r'LET\s*\(', text)
     if m: return parse_let(text[m.end()-1:])

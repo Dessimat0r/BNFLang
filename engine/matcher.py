@@ -90,7 +90,11 @@ def eval_node(node, scope, state):
     if t == 'num':   return node['value']
     if t == 'label': return scope.get(node['name'])
     if t == 'list':  return [eval_node(x, scope, state) for x in node['items']]
-    if t == 'plus':  return str(eval_node(node['left'], scope, state)) + str(eval_node(node['right'], scope, state))
+    if t == 'plus':
+        l = str(eval_node(node['left'], scope, state))
+        r = str(eval_node(node['right'], scope, state))
+        if l.isdigit() and r.isdigit(): return str(int(l) + int(r))
+        return l + r
     if t == 'let':
         v = eval_node(node['val'], scope, state)
         ns = dict(scope); ns[node['name']] = v
@@ -106,6 +110,20 @@ def eval_node(node, scope, state):
                 cache[target] = re.compile(r'\b' + re.escape(target) + r'\b')
             return cache[target].sub(repl, text)
         if fn == 'RULE': return call_rule(args, state)
+        if fn == 'MATCH_BRACE':
+            text = str(args[0]) if args else ''
+            pos = int(str(args[1])) if len(args) > 1 else 0
+            depth = 0
+            i = pos
+            while i < len(text):
+                if text[i] == '{':
+                    depth += 1
+                elif text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        return str(i)
+                i += 1
+            return str(len(text))
         if fn in (state.get('_g') or {}).rules:
             return call_rule([fn] + args, state)
         raise KeyError(f"Unknown: {fn}")
