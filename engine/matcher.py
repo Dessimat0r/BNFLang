@@ -1,6 +1,11 @@
 import re
 from .grammar import Pattern
 
+CATCHALL_RE = re.compile(r'^\[\\s\\S\][*+]$')
+
+def _is_catchall(alt):
+    return bool(len(alt.patterns) == 1 and alt.patterns and CATCHALL_RE.match(alt.patterns[0].data))
+
 def match_grammar(grammar, text, state=None):
     if state is None: state = {}
     state['_g'] = grammar
@@ -9,10 +14,34 @@ def match_grammar(grammar, text, state=None):
         raise SyntaxError("Parse failed")
     return r
 
+OPT_RULES = {'Expr', 'Compare', 'AddExpr', 'MulExpr', 'Primary', 'Ceil16'}
+
 def _rule(g, name, text, pos, state, scope):
     rule = g.rules.get(name)
     if not rule: raise KeyError(f"Unknown rule: {name}")
     saved = dict(state)
+    if name in OPT_RULES:
+        best_r, best_p, best_cost, best_state = None, None, None, None
+        fallback_r, fallback_p, fallback_state = None, None, None
+        for alt in rule.alts:
+            state.clear(); state.update(saved)
+            ns = dict(scope)
+            r, p = _alt(g, alt, text, pos, state, ns)
+            if p is not None and r is not None:
+                if _is_catchall(alt):
+                    fallback_r, fallback_p, fallback_state = r, p, dict(state)
+                else:
+                    cost = len(str(r))
+                    if best_r is None or p > best_p or (p == best_p and cost < best_cost):
+                        best_r, best_p, best_cost, best_state = r, p, cost, dict(state)
+        if best_r is not None:
+            state.clear(); state.update(best_state)
+            return best_r, best_p
+        if fallback_r is not None:
+            state.clear(); state.update(fallback_state)
+            return fallback_r, fallback_p
+        state.clear(); state.update(saved)
+        return None, None
     for alt in rule.alts:
         ns = dict(scope)
         r, p = _alt(g, alt, text, pos, state, ns)

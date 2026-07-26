@@ -105,17 +105,25 @@ Compare ::= /[^<]+/:l "<=" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetl al\nmovzx eax, al"
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
-AddExpr ::= /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[\s\S]+/:r
+AddExpr ::= /(?:[^+(\-]+|\([^)]*\))+/:l "+" "0" => RULE("Expr", l)
+          | "0" "+" /(?:[^+(\-]+|\([^)]*\))+/:r => RULE("Expr", r)
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "-" "0" => RULE("Expr", l)
+          | /(?:[^+(\-]+|\([^)]*\))+/:l "+" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nadd eax, ecx"
   | /(?:[^+(\-]+|\([^)]*\))+/:l "-" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\nsub eax, ecx"
   | /[\s\S]+/:s => RULE("MulExpr", s)
 
-MulExpr ::= /(?:[^/(]+|\([^)]*\))+/:l "/" /[\s\S]+/:r
+MulExpr ::= /(?:[^*/(]+|\([^)]*\))+/:l "*" "0" => "mov eax, 0"
+          | /(?:[^*/(]+|\([^)]*\))+/:l "*" "1" => RULE("Expr", l)
+          | "0" "*" /(?:[^*/(]+|\([^)]*\))+/:r => "mov eax, 0"
+          | "1" "*" /(?:[^*/(]+|\([^)]*\))+/:r => RULE("Expr", r)
+          | /(?:[^/(]+|\([^)]*\))+/:l "/" "1" => RULE("Expr", l)
+          | "0" "/" /(?:[^/(]+|\([^)]*\))+/:r => "mov eax, 0"
+          | /(?:[^/(]+|\([^)]*\))+/:l "/" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
   | /(?:[^*/(]+|\([^)]*\))+/:l "*" /[\s\S]+/:r
     => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nimul eax, ecx"
-  | /[\s\S]+/:s => RULE("Primary", s)
   | /[\s\S]+/:s => RULE("Primary", s)
 
 Primary ::= "(" /(?:[^()]+|\([^)]*\))*/:e ")" => RULE("Expr", e)
