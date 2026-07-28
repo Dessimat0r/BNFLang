@@ -16,6 +16,184 @@ def get_tmp_var(expr, raw_lines):
     raw_lines.append(f"int {tname} = {expr};")
     return tname
 
+def desugar_high_level_control_flow(src):
+    """
+    Desugar C control flow constructs before statement normalization:
+    - for (init; cond; incr) { body } -> init; while (cond) { body incr; }
+    - else if (cond) -> else { if (cond) ... } }
+    - switch (expr) { case V1: s1; break; ... default: sN; } -> if-else chain
+    - do { body } while (cond); -> do_while (cond) { body }
+    """
+    # 1. Desugar for loops: for (init; cond; incr) { ... }
+    pos = 0
+    while True:
+        m = re.search(r'\bfor\s*\(\s*([^;]*);\s*([^;]*);\s*([^)]*)\)\s*\{', src[pos:])
+        if not m:
+            break
+        start_idx = pos + m.start()
+        open_brace = pos + m.end() - 1
+        depth = 1
+        i = open_brace + 1
+        while i < len(src) and depth > 0:
+            if src[i] == '{':
+                depth += 1
+            elif src[i] == '}':
+                depth -= 1
+            i += 1
+        body = src[open_brace+1:i-1].strip()
+        init = m.group(1).strip()
+        cond = m.group(2).strip()
+        incr = m.group(3).strip()
+        if init and not init.endswith(';'):
+            init += ';'
+        if incr and not incr.endswith(';'):
+            incr += ';'
+        replacement = f"\n{init}\nwhile ({cond}) {{\n{body}\n{incr}\n}}\n"
+        src = src[:start_idx] + replacement + src[i:]
+        pos = start_idx + len(replacement)
+
+    # 2. Desugar do { body } while (cond);
+    pos = 0
+    while True:
+        m = re.search(r'\bdo\s*\{', src[pos:])
+        if not m:
+            break
+        start_idx = pos + m.start()
+        open_brace = pos + m.end() - 1
+        depth = 1
+        i = open_brace + 1
+        while i < len(src) and depth > 0:
+            if src[i] == '{':
+                depth += 1
+            elif src[i] == '}':
+                depth -= 1
+            i += 1
+        body = src[open_brace+1:i-1].strip()
+        wm = re.match(r'^\s*while\s*\(\s*([^)]+)\s*\)\s*;', src[i:])
+        if wm:
+            cond = wm.group(1).strip()
+            end_idx = i + wm.end()
+            replacement = f"\ndo_while ({cond}) {{\n{body}\n}}\n"
+            src = src[:start_idx] + replacement + src[end_idx:]
+            pos = start_idx + len(replacement)
+        else:
+            pos = i
+
+    # 3. Desugar else if chains: wrap trailing else-if/else in nested else { ... }
+    pos = 0
+    while True:
+        m = re.search(r'\bif\s*\(\s*([^)]+)\s*\)\s*\{', src[pos:])
+        if not m:
+            break
+        start_idx = pos + m.start()
+        # Check if this if is followed by else if
+        open_brace = pos + m.end() - 1
+        depth = 1
+        i = open_brace + 1
+        while i < len(src) and depth > 0:
+            if src[i] == '{':
+                depth += 1
+            elif src[i] == '}':
+                depth -= 1
+            i += 1
+        
+        # Check what follows closing brace of if
+        rem = src[i:]
+        elseif_m = re.match(r'^\s*else\s+if\s*\(\s*([^)]+)\s*\)\s*\{', rem)
+        if elseif_m:
+            # Transform else if -> else { if ... and find end of entire if-else chain to append extra }
+            # Find end of entire chain
+            chain_depth = 0
+            cur = i
+            else_count = 0
+            while cur < len(src):
+                m_else = re.match(r'^\s*else\s+if\s*\(\s*([^)]+)\s*\)\s*\{', src[cur:])
+                if m_else:
+                    else_count += 1
+                    # Skip to closing brace of this block
+                    ob = cur + m_else.end() - 1
+                    d = 1
+                    j = ob + 1
+                    while j < len(src) and d > 0:
+                        if src[j] == '{': d += 1
+                        elif src[j] == '}': d -= 1
+                        j += 1
+                    cur = j
+                    continue
+                m_final_else = re.match(r'^\s*else\s*\{', src[cur:])
+                if m_final_else:
+                    ob = cur + m_final_else.end() - 1
+                    d = 1
+                    j = ob + 1
+                    while j < len(src) and d > 0:
+                        if src[j] == '{': d += 1
+                        elif src[j] == '}': d -= 1
+                        j += 1
+                    cur = j
+                    break
+                break
+            
+            # Substring to transform from i to cur
+            chain_str = src[i:cur]
+            chain_trans = re.sub(r'\belse\s+if\s*\(', r'else {\nif (', chain_str) + ("\n}" * else_count)
+            src = src[:i] + chain_trans + src[cur:]
+            pos = i + len(chain_trans)
+        else:
+            pos = i
+
+    # 4. Desugar switch (expr) { case V1: s1; break; case V2: s2; break; default: s3; }
+    pos = 0
+    while True:
+        m = re.search(r'\bswitch\s*\(\s*([^)]+)\s*\)\s*\{', src[pos:])
+        if not m:
+            break
+        start_idx = pos + m.start()
+        open_brace = pos + m.end() - 1
+        depth = 1
+        i = open_brace + 1
+        while i < len(src) and depth > 0:
+            if src[i] == '{':
+                depth += 1
+            elif src[i] == '}':
+                depth -= 1
+            i += 1
+        sw_expr = m.group(1).strip()
+        sw_body = src[open_brace+1:i-1]
+
+        # Parse case branches
+        case_blocks = re.findall(r'case\s+([^:]+):\s*(.*?)(?=case\s+|default\s*:|$)', sw_body, re.DOTALL)
+        def_block = re.search(r'default\s*:\s*(.*)$', sw_body, re.DOTALL)
+
+        global tmp_counter
+        tmp_counter += 1
+        sw_var = f"_sw{tmp_counter}"
+
+        if_chain = [f"int {sw_var} = {sw_expr};"]
+        first = True
+        else_count = 0
+        for cval, cstmts in case_blocks:
+            cval = cval.strip()
+            cstmts = cstmts.replace("break;", "").strip()
+            if first:
+                if_chain.append(f"if ({sw_var} == {cval}) {{\n{cstmts}\n}}")
+                first = False
+            else:
+                if_chain.append(f"else {{\nif ({sw_var} == {cval}) {{\n{cstmts}\n}}")
+                else_count += 1
+        if def_block:
+            def_stmts = def_block.group(1).replace("break;", "").strip()
+            if_chain.append(f"else {{\n{def_stmts}\n}}")
+            else_count += 1
+
+        if else_count > 0:
+            if_chain.append("}" * (else_count - 1 if def_block else else_count))
+
+        replacement = "\n" + "\n".join(if_chain) + "\n"
+        src = src[:start_idx] + replacement + src[i:]
+        pos = start_idx + len(replacement)
+
+    return src
+
 def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=None, struct_vars=None):
     """
     Preprocess C source code into normalized statements for SBNF compilation.
@@ -23,6 +201,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
     - Resolves typedef statements
     - Desugars struct declarations and member access (s.field -> s_field)
     - Desugars buffer/array declarations (char buf[64] -> 64-byte stack allocation)
+    - Desugars control flow (for, do-while, else-if, switch-case)
     - Normalizes multi-argument printf(...) and sprintf(...)
     """
     if processed_includes is None:
@@ -33,6 +212,9 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         struct_defs = {}
     if struct_vars is None:
         struct_vars = {}
+
+    # Desugar high-level control flow structures first
+    src = desugar_high_level_control_flow(src)
 
     lines = src.split("\n")
     raw_lines = []
@@ -171,7 +353,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             raw_lines.append("println;")
             continue
 
-        m = re.match(r'^printf\s*\(\s*"\s+"\s*\)\s*;', sline)
+        m = re.match(r'^printf\s*\(\s*" "\s*\)\s*;', sline)
         if m:
             raw_lines.append("printsp;")
             continue

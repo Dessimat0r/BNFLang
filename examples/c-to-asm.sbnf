@@ -1,6 +1,6 @@
 // C-like → x86-64 asm (Meta-SBNF)
 // Engine: PEG + LET RULE REPLACE.
-// Operators: + - * / < <=
+// Operators: + - * / < <= == != > >=
 
 
 Program ::= /[\s\S]*/:src => RULE("Decls", "4\x00\x00" + src)
@@ -20,22 +20,42 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int
      + ".text\n.globl _main\n.intel_syntax noprefix\n"
      + "_main:\npush rbp\nmov rbp, rsp\nsub rsp, " + n + "\n"
      + i
-     + RULE("Stmts", "0\x00" + c)
+     + RULE("Stmts", "10\x00none\x00none\x00" + c)
      + "mov rsp, rbp\npop rbp\nret\n"
 
 // ── Statement phase ──────────────────────────────────────────────────────
 
-Stmts ::= /[0-9]+/:lc "\x00" /[\s\S]*/:code => RULE("S", lc + "\x00" + code)
+Stmts ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + code)
 
-S ::= /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" WhileBody:body "}" /[\s\S]*/:rest
-    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "2") + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" WhileBody:body "}" => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
-  | /[0-9]+/:lc "\x00" Stmt:first "\n" /[\s\S]*/:rest => first + "\n" + RULE("S", lc + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" Stmt:last => last + "\n"
+S ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
+    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:body "}"
+    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
+    => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:body "}"
+    => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
+    => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}"
+    => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
+    => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:cond ")" "{" BlockBody:body "}"
+    => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:first "\n" /[\s\S]*/:rest
+    => RULE("GenStmt", cl + "\x00" + bl + "\x00" + first) + "\n" + RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + rest)
+  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"
   | => ""
 
+GenStmt ::= /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "break;" => "jmp .L" + bl
+          | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "continue;" => "jmp .L" + cl
+          | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:s => s
+
 Stmt ::=
-    "print3" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 /[a-zA-Z_@0-9]+/:v3 ";"
+    "break;" => "break;"
+  | "continue;" => "continue;"
+  | "print3" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 /[a-zA-Z_@0-9]+/:v3 ";"
     => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "mov esi, eax" + "\n" + a2 + "\n" + "mov edx, eax" + "\n" + a3 + "\n" + "mov ecx, eax" + "\n" + "lea rdi, [rip + fmt_3d]" + "\n" + "xor eax, eax" + "\n" + "call _printf")))
   | "print2" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 ";"
     => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "mov esi, eax" + "\n" + a2 + "\n" + "mov edx, eax" + "\n" + "lea rdi, [rip + fmt_2d]" + "\n" + "xor eax, eax" + "\n" + "call _printf"))
@@ -60,28 +80,64 @@ Stmt ::=
 
 OffOf ::= /[^@]+/:name "@" /[0-9]+/:off => off | /[a-zA-Z_]\w*/:name => name
 
-// ── While loop ───────────────────────────────────────────────────────────
+// ── Loops and conditionals ───────────────────────────────────────────────
 
-WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest | "{" WhileBody:inner "}" WhileBody:rest => "{" + inner + "}" + rest | => ""
+BlockBody ::= /[^{}]+/:text BlockBody:rest => text + rest | "{" BlockBody:inner "}" BlockBody:rest => "{" + inner + "}" + rest | => ""
 
 GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
-    => ".L" + lc + ":\n" + RULE("Expr", cond) + "\n" + "test eax, eax" + "\n" + "je .L" + (lc + "1") + "\n" + RULE("Stmts", (lc + "2") + "\x00" + body) + "\n" + "jmp .L" + lc + "\n" + ".L" + (lc + "1") + ":\n"
+    => ".L" + lc + ":\n" + RULE("Expr", cond) + "\n" + "test eax, eax" + "\n" + "je .L" + (lc + "1") + "\n" + RULE("Stmts", (lc + "2") + "\x00" + lc + "\x00" + (lc + "1") + "\x00" + body) + "\n" + "jmp .L" + lc + "\n" + ".L" + (lc + "1") + ":\n"
+
+GenDoWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
+    => ".L" + lc + ":\n" + RULE("Stmts", (lc + "2") + "\x00" + (lc + "3") + "\x00" + (lc + "1") + "\x00" + body) + "\n" + ".L" + (lc + "3") + ":\n" + RULE("Expr", cond) + "\n" + "test eax, eax" + "\n" + "jne .L" + lc + "\n" + ".L" + (lc + "1") + ":\n"
+
+GenIf ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
+    => RULE("Expr", cond) + "\n" + "test eax, eax" + "\n" + "je .L" + lc + "\n" + RULE("Stmts", (lc + "1") + "\x00" + cl + "\x00" + bl + "\x00" + body) + "\n" + ".L" + lc + ":\n"
+
+GenIfElse ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[^\x00]+/:cond "\x00" /[^\x00]*/:b1 "\x00" /[\s\S]*/:b2
+    => RULE("Expr", cond) + "\n" + "test eax, eax" + "\n" + "je .L" + lc + "\n" + RULE("Stmts", (lc + "2") + "\x00" + cl + "\x00" + bl + "\x00" + b1) + "\n" + "jmp .L" + (lc + "1") + "\n" + ".L" + lc + ":\n" + RULE("Stmts", (lc + "3") + "\x00" + cl + "\x00" + bl + "\x00" + b2) + "\n" + ".L" + (lc + "1") + ":\n"
 
 // ── Expression rules (precedence: Compare > AddExpr > MulExpr > Primary) ──
 
 Expr ::= /[\s\S]+/:s => RULE("Compare", s)
 
+Compare ::=
 
-Compare ::= /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setle al" + "\n" + "movzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setle al" + "\n" + "movzx eax, al"
+    /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "==" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "sete al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "==" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "sete al" + "\n" + "movzx eax, al"
+  | /[a-zA-Z_@0-9]+/:l "==" /[\s\S]+/:r  => RULE("Expr", r) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", l) + "\n" + "cmp eax, ecx" + "\n" + "sete al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "==" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "sete al" + "\n" + "movzx eax, al"
+  |
+
+    /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "!=" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setne al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "!=" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setne al" + "\n" + "movzx eax, al"
+  | /[a-zA-Z_@0-9]+/:l "!=" /[\s\S]+/:r  => RULE("Expr", r) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", l) + "\n" + "cmp eax, ecx" + "\n" + "setne al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "!=" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setne al" + "\n" + "movzx eax, al"
+  |
+
+    /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setle al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setle al" + "\n" + "movzx eax, al"
   | /[a-zA-Z_@0-9]+/:l "<=" /[\s\S]+/:r  => RULE("Expr", r) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", l) + "\n" + "cmp eax, ecx" + "\n" + "setle al" + "\n" + "movzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setle al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setle al" + "\n" + "movzx eax, al"
+  |
 
-Compare ::= /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setl al" + "\n" + "movzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setl al" + "\n" + "movzx eax, al"
+    /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setl al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setl al" + "\n" + "movzx eax, al"
   | /[a-zA-Z_@0-9]+/:l "<" /[\s\S]+/:r  => RULE("Expr", r) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", l) + "\n" + "cmp eax, ecx" + "\n" + "setl al" + "\n" + "movzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setl al" + "\n" + "movzx eax, al"
-  | /[\s\S]+/:s => RULE("AddExpr", s)
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setl al" + "\n" + "movzx eax, al"
+  |
+
+    /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l ">=" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setge al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l ">=" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setge al" + "\n" + "movzx eax, al"
+  | /[a-zA-Z_@0-9]+/:l ">=" /[\s\S]+/:r  => RULE("Expr", r) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", l) + "\n" + "cmp eax, ecx" + "\n" + "setge al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l ">=" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setge al" + "\n" + "movzx eax, al"
+  |
+
+    /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l ">" /[0-9]+/:r => RULE("Expr", l) + "\n" + "cmp eax, " + r + "\n" + "setg al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l ">" /[a-zA-Z_@0-9]+/:r  => RULE("Expr", l) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", r) + "\n" + "cmp ecx, eax" + "\n" + "setg al" + "\n" + "movzx eax, al"
+  | /[a-zA-Z_@0-9]+/:l ">" /[\s\S]+/:r  => RULE("Expr", r) + "\n" + "mov ecx, eax" + "\n" + RULE("Expr", l) + "\n" + "cmp eax, ecx" + "\n" + "setg al" + "\n" + "movzx eax, al"
+  | /(?:[^<>=!]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l ">" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "push rax" + "\n" + RULE("Expr", r) + "\n" + "pop rcx" + "\n" + "cmp ecx, eax" + "\n" + "setg al" + "\n" + "movzx eax, al"
+  |
+    /[\s\S]+/:s => RULE("AddExpr", s)
 
 AddExpr ::= /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l /[+-]/ "0" => RULE("Expr", l)
           | "0" "+" /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:r => RULE("Expr", r)
