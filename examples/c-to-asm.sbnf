@@ -10,7 +10,7 @@ Program ::= /[\s\S]*/:src => RULE("Decls", "4\x00\x00" + src)
 Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
 TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "lea rax, [rbp-" + RULE("OffOfPtr", ref) + "]" + "\n" + "mov QWORD PTR [rbp-" + n + "], rax" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "lea rax, [rbp-" + RULE("OffOf", ref) + "]" + "\n" + "mov QWORD PTR [rbp-" + n + "], rax" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[0-9]+/:val ";" "\n" /[\s\S]*/:c => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "mov DWORD PTR [rbp-" + n + "], " + val + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "mov eax, " + val + "\n" + "mov DWORD PTR [rbp-" + n + "], eax" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
@@ -47,7 +47,7 @@ Stmt ::=
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";" => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\n" + "mov DWORD PTR [rbp-" + off + "], eax")
   | "{" => "" | "}" => "" | /[\s]+/:ws => "" | /./:c => c
 
-OffOf ::= /[^@]+/:name "@" /[0-9]+/:off "\x00" /[\s\S]*/:rest => off | /[a-zA-Z_]\w*/:name "\x00" /[\s\S]*/:rest => name
+OffOf ::= /[^@]+/:name "@" /[0-9]+/:off => off | /[a-zA-Z_]\w*/:name => name
 
 // ── While loop ───────────────────────────────────────────────────────────
 
@@ -127,4 +127,3 @@ PtrChain ::= /[a-zA-Z_@0-9]+/:name => RULE("LoadQWord", name) | "*" PtrChain:inn
 AnnotatedVar ::= /[^@]+/:name "@" /[0-9]+/:off => "mov eax, DWORD PTR [rbp-" + off + "]" | /[a-zA-Z_]\w*/:name => "mov eax, DWORD PTR [rbp-" + name + "]"
 LoadQWord    ::= /[^@]+/:name "@" /[0-9]+/:off => "mov rax, QWORD PTR [rbp-" + off + "]" | /[a-zA-Z_]\w*/:name => "mov rax, QWORD PTR [rbp-" + name + "]"
 AddrOf       ::= /[^@]+/:name "@" /[0-9]+/:off => "lea rax, [rbp-" + off + "]"
-OffOfPtr     ::= /[^@]+/:name "@" /[0-9]+/:off => off

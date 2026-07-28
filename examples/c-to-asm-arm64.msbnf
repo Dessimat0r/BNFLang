@@ -12,7 +12,7 @@ Program ::= /[\s\S]*/:src => RULE("Decls", "4\x00\x00" + src)
 Decls ::= $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
 TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
-    => DECL(v, n, i, c, "sub x16, x29, #" + RULE("OffOfPtr", ref) \+ "str x16, [x29, #-" + n + "]" \+ "")
+    => DECL(v, n, i, c, "sub x16, x29, #" + RULE("OffOf", ref) \+ "str x16, [x29, #-" + n + "]" \+ "")
   | $DECL_HDR /\*+/ $IDENT:v ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "")
   | $DECL_HDR $IDENT:v "=" "0" ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "str wzr, [x29, #-" + n + "]" \+ "")
   | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "mov w0, " + val \+ "str w0, [x29, #-" + n + "]" \+ "")
@@ -47,7 +47,7 @@ Stmt ::=
   | $VAR:name "=" /[^;]+/:val ";" => let off = RULE("OffOf", name + "\x00" + val); RULE("Expr", val) \+ "str w0, [x29, #-" + off + "]"
   | "{" => "" | "}" => "" | /[\s]+/:ws => "" | /./:c => c
 
-OffOf ::= /[^@]+/:name "@" $NUM:off "\x00" /[\s\S]*/:rest => off | $IDENT:name "\x00" /[\s\S]*/:rest => name
+OffOf ::= $VAR_OFF => off | $IDENT:name => name
 
 // ── While loop ───────────────────────────────────────────────────────────
 
@@ -102,7 +102,6 @@ PtrChain ::= $VAR:name => RULE("LoadQWord", name) | "*" PtrChain:inner => inner 
 AnnotatedVar ::= $VAR_OFF => "ldr w0, [x29, #-" + off + "]" | $IDENT:name => "ldr w0, [x29, #-" + name + "]"
 LoadQWord    ::= $VAR_OFF => "ldr x0, [x29, #-" + off + "]" | $IDENT:name => "ldr x0, [x29, #-" + name + "]"
 AddrOf       ::= $VAR_OFF => "sub x0, x29, #" + off
-OffOfPtr     ::= $VAR_OFF => off
 
 Ceil16 ::=
 %for k, c in [("64","64"),("60","64"),("56","64"),("52","64"),("48","48"),("44","48"),("40","48"),("36","48"),("32","32"),("28","32"),("24","32"),("20","32"),("16","16"),("12","16"),("8","16"),("4","16")] {
