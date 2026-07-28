@@ -3,23 +3,19 @@
 // Operators: + - * / < <=
 
 $IDENT = /[a-zA-Z_]\w*/
+$DECL_HDR = $NUM:n "\x00" /[^\x00]*/:i "\x00int "
 
-Program ::= /[\s\S]*/:src
-    => RULE("Decls", "4\x00\x00" + src)
+Program ::= /[\s\S]*/:src => RULE("Decls", "4\x00\x00" + src)
 
 // ── Declaration phase ─────────────────────────────────────────────────────
 
-Decls ::= $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
-    => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
+Decls ::= $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
-TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
+TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => DECL(v, n, i, c, "lea rax, [rbp-" + RULE("OffOfPtr", ref) + "]" \+ "mov QWORD PTR [rbp-" + n + "], rax" \+ "")
-  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ $IDENT:v ";" "\n" /[\s\S]*/:c
-    => DECL(v, n, i, c, "")
-  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" $NUM:val ";" "\n" /[\s\S]*/:c
-    => DECL(v, n, i, c, "mov DWORD PTR [rbp-" + n + "], " + val \+ "")
-  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
-    => DECL(v, n, i, c, "mov eax, " + val \+ "mov DWORD PTR [rbp-" + n + "], eax" \+ "")
+  | $DECL_HDR /\*+/ $IDENT:v ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "")
+  | $DECL_HDR $IDENT:v "=" $NUM:val ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "mov DWORD PTR [rbp-" + n + "], " + val \+ "")
+  | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "mov eax, " + val \+ "mov DWORD PTR [rbp-" + n + "], eax" \+ "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
      + ".text\n.globl _main\n.intel_syntax noprefix\n"
@@ -30,51 +26,35 @@ TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ $IDENT:v "=" "&" $VAR:re
 
 // ── Statement phase ──────────────────────────────────────────────────────
 
-Stmts ::= $NUM:lc "\x00" /[\s\S]*/:code
-    => RULE("S", lc + "\x00" + code)
+Stmts ::= $NUM:lc "\x00" /[\s\S]*/:code => RULE("S", lc + "\x00" + code)
 
 S ::= $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}" /[\s\S]*/:rest
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "2") + "\x00" + rest)
-  | $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}"
-    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
-  | $NUM:lc "\x00" Stmt:first "\n" /[\s\S]*/:rest
-    => first + "\n" + RULE("S", lc + "\x00" + rest)
-  | $NUM:lc "\x00" Stmt:last
-    => last + "\n"
+  | $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}" => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
+  | $NUM:lc "\x00" Stmt:first "\n" /[\s\S]*/:rest => first + "\n" + RULE("S", lc + "\x00" + rest)
+  | $NUM:lc "\x00" Stmt:last => last + "\n"
   | => ""
 
 Stmt ::=
-    "println" ";"
-    => "lea rdi, [rip + fmt_nl]" \+ "xor eax, eax" \+ "call _printf"
-  | "printsp" ";"
-    => "lea rdi, [rip + fmt_sp]" \+ "xor eax, eax" \+ "call _printf"
-  | "printn" /[^;]+/:val ";"
-    => RULE("Expr", val) \+ "mov esi, eax" \+ "lea rdi, [rip + fmtn]" \+ "xor eax, eax" \+ "call _printf"
-  | "print" /[^;]+/:val ";"
-    => RULE("Expr", val) \+ "mov esi, eax" \+ "lea rdi, [rip + fmt]" \+ "xor eax, eax" \+ "call _printf"
-  | "*" PtrChain:ptr "=" /[^;]+/:val ";"
-    => let val_asm = RULE("Expr", val);
-       ptr \+ "push rax" \+ val_asm \+ "pop rcx" \+ "mov DWORD PTR [rcx], eax"
-  | $VAR:name "=" /[^;]+/:val ";"
-    => let off = RULE("OffOf", name + "\x00" + val);
-       RULE("Expr", val) \+ "mov DWORD PTR [rbp-" + off + "], eax"
-  | "{" => ""
-  | "}" => ""
-  | /[\s]+/:ws => ""
-  | /./:c => c
+%for kw, fmt in [("println", "fmt_nl"), ("printsp", "fmt_sp")] {
+    "{kw}" ";" => "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf" |
+}
+%for kw, fmt in [("printn", "fmtn"), ("print", "fmt")] {
+    "{kw}" /[^;]+/:val ";" => RULE("Expr", val) \+ "mov esi, eax" \+ "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf" |
+}
+    "*" PtrChain:ptr "=" /[^;]+/:val ";"
+    => let val_asm = RULE("Expr", val); ptr \+ "push rax" \+ val_asm \+ "pop rcx" \+ "mov DWORD PTR [rcx], eax"
+  | $VAR:name "=" /[^;]+/:val ";" => let off = RULE("OffOf", name + "\x00" + val); RULE("Expr", val) \+ "mov DWORD PTR [rbp-" + off + "], eax"
+  | "{" => "" | "}" => "" | /[\s]+/:ws => "" | /./:c => c
 
-OffOf ::= /[^@]+/:name "@" $NUM:off "\x00" /[\s\S]*/:rest => off
-        | $IDENT:name "\x00" /[\s\S]*/:rest => name
+OffOf ::= $VAR_OFF "\x00" /[\s\S]*/:rest => off | $IDENT:name "\x00" /[\s\S]*/:rest => name
 
 // ── While loop ───────────────────────────────────────────────────────────
 
-WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest
-            | "{" WhileBody:inner "}" WhileBody:rest => "{" + inner + "}" + rest
-            | => ""
+WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest | "{" WhileBody:inner "}" WhileBody:rest => "{" + inner + "}" + rest | => ""
 
 GenWhile ::= $NUM:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
-    => ".L" + lc + ":\n"
-     + RULE("Expr", cond) \+ "test eax, eax" \+ "je .L" + (lc + "1") \+ RULE("Stmts", (lc + "2") + "\x00" + body) \+ "jmp .L" + lc \+ ".L" + (lc + "1") + ":\n"
+    => ".L" + lc + ":\n" + RULE("Expr", cond) \+ "test eax, eax" \+ "je .L" + (lc + "1") \+ RULE("Stmts", (lc + "2") + "\x00" + body) \+ "jmp .L" + lc \+ ".L" + (lc + "1") + ":\n"
 
 // ── Expression rules (precedence: Compare > AddExpr > MulExpr > Primary) ──
 
@@ -88,13 +68,14 @@ Compare ::= $NO_COMP:l "{op}" $NUM:r => RULE("Expr", l) \+ "cmp eax, " + r \+ "s
 }
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
-AddExpr ::= $NO_ADD:l "+" "0" => RULE("Expr", l)
+AddExpr ::= $NO_ADD:l /[+-]/ "0" => RULE("Expr", l)
           | "0" "+" $NO_ADD:r => RULE("Expr", r)
-          | $NO_ADD:l "-" "0" => RULE("Expr", l)
-          | $NO_ADD:l "+" "1" => RULE("Expr", l) \+ "inc eax"
-          | $NO_ADD:l "-" "1" => RULE("Expr", l) \+ "dec eax"
-          | $NO_ADD:l "+" $NUM:r => RULE("Expr", l) \+ "lea eax, [eax + " + r + "]"
-          | $NO_ADD:l "-" $NUM:r => RULE("Expr", l) \+ "lea eax, [eax - " + r + "]"
+%for op, inst in [("+", "inc"), ("-", "dec")] {
+          | $NO_ADD:l "{op}" "1" => RULE("Expr", l) \+ "{inst} eax"
+}
+%for op in ["+", "-"] {
+          | $NO_ADD:l "{op}" $NUM:r => RULE("Expr", l) \+ "lea eax, [eax {op} " + r + "]"
+}
           | $NO_ADD:l "+" $VAR:r => RULE("Expr", l) \+ "mov ecx, eax" \+ RULE("Expr", r) \+ "add eax, ecx"
           | $NO_ADD:l "-" $VAR:r => RULE("Expr", l) \+ "mov ecx, eax" \+ RULE("Expr", r) \+ "sub ecx, eax" \+ "mov eax, ecx"
           | $VAR:l "+" /[\s\S]+/:r => RULE("Expr", r) \+ "mov ecx, eax" \+ RULE("Expr", l) \+ "add eax, ecx"
@@ -104,11 +85,9 @@ AddExpr ::= $NO_ADD:l "+" "0" => RULE("Expr", l)
   | /[\s\S]+/:s => RULE("MulExpr", s)
 
 MulExpr ::= $NO_MUL:l "*" "0" => "xor eax, eax"
-          | $NO_MUL:l "*" "1" => RULE("Expr", l)
-          | "0" "*" $NO_MUL:r => "xor eax, eax"
+          | "0" /[*/]/ $NO_MUL:r => "xor eax, eax"
+          | $NO_MUL:l /[*/]/ "1" => RULE("Expr", l)
           | "1" "*" $NO_MUL:r => RULE("Expr", r)
-          | $NO_MUL:l "/" "1" => RULE("Expr", l)
-          | "0" "/" $NO_MUL:r => "xor eax, eax"
           | $NO_MUL:l "*" "2" => RULE("Expr", l) \+ "add eax, eax"
 %for val, shift in [("4","2"), ("8","3"), ("16","4"), ("32","5"), ("64","6")] {
           | $NO_MUL:l "*" "{val}" => RULE("Expr", l) \+ "shl eax, {shift}"
@@ -130,14 +109,9 @@ Primary ::= "(" $PAREN:e ")" => RULE("Expr", e)
           | $NUM:n => "mov eax, " + n
           | $VAR:name => RULE("AnnotatedVar", name)
 
-PtrChain ::= $VAR:name => RULE("LoadQWord", name)
-           | "*" PtrChain:inner => inner \+ "mov rax, [rax]"
+PtrChain ::= $VAR:name => RULE("LoadQWord", name) | "*" PtrChain:inner => inner \+ "mov rax, [rax]"
 
-AnnotatedVar ::= /[^@]+/:name "@" $NUM:off => "mov eax, DWORD PTR [rbp-" + off + "]"
-               | $IDENT:name => "mov eax, DWORD PTR [rbp-" + name + "]"
-
-LoadQWord ::= /[^@]+/:name "@" $NUM:off => "mov rax, QWORD PTR [rbp-" + off + "]"
-            | $IDENT:name => "mov rax, QWORD PTR [rbp-" + name + "]"
-
-AddrOf ::= /[^@]+/:name "@" $NUM:off => "lea rax, [rbp-" + off + "]"
-OffOfPtr ::= /[^@]+/:name "@" $NUM:off => off
+AnnotatedVar ::= $VAR_OFF => "mov eax, DWORD PTR [rbp-" + off + "]" | $IDENT:name => "mov eax, DWORD PTR [rbp-" + name + "]"
+LoadQWord    ::= $VAR_OFF => "mov rax, QWORD PTR [rbp-" + off + "]" | $IDENT:name => "mov rax, QWORD PTR [rbp-" + name + "]"
+AddrOf       ::= $VAR_OFF => "lea rax, [rbp-" + off + "]"
+OffOfPtr     ::= $VAR_OFF => off
