@@ -42,7 +42,9 @@ Stmt ::=
     "printn" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "mov esi, eax" + "\n" + "lea rdi, [rip + fmtn]" + "\n" + "xor eax, eax" + "\n" + "call _printf" |
 
     "print" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "mov esi, eax" + "\n" + "lea rdi, [rip + fmt]" + "\n" + "xor eax, eax" + "\n" + "call _printf" |
-    "*" PtrChain:ptr "=" /[^;]+/:val ";"
+    "sprintf" /[a-zA-Z_@0-9]+/:buf /[^;]+/:val ";"
+    => LET(val_asm, RULE("Expr", val), LET(buf_off, RULE("OffOf", buf + "\x00" + val), "lea rdi, [rbp-" + buf_off + "]" + "\n" + "lea rsi, [rip + fmt]" + "\n" + val_asm + "\n" + "mov edx, eax" + "\n" + "xor eax, eax" + "\n" + "call _sprintf"))
+  | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => LET(val_asm, RULE("Expr", val), ptr + "\n" + "push rax" + "\n" + val_asm + "\n" + "pop rcx" + "\n" + "mov DWORD PTR [rcx], eax")
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";" => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\n" + "mov DWORD PTR [rbp-" + off + "], eax")
   | "{" => "" | "}" => "" | /[\s]+/:ws => "" | /./:c => c

@@ -4,7 +4,7 @@ GTIMEOUT := $(shell command -v gtimeout 2>/dev/null || echo "gtimeout")
 
 # ── Programs (x86-64) ───────────────────────────────────────────────────────
 
-PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr
+PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf
 
 # Compile .msbnf → .sbnf
 examples/c-to-asm.sbnf: examples/c-to-asm.msbnf
@@ -13,7 +13,7 @@ examples/c-to-asm.sbnf: examples/c-to-asm.msbnf
 examples/c-to-asm-arm64.sbnf: examples/c-to-asm-arm64.msbnf
 	python -m engine.msbnf examples/c-to-asm-arm64.msbnf examples/c-to-asm-arm64.sbnf
 
-# Compile .c → .s via our grammar
+# Compile .c / .sbnfc → .s via our grammar
 examples/counter.s: examples/c-to-asm.sbnf examples/counter.c
 	python -m engine examples/c-to-asm.sbnf examples/counter.c examples/counter.s
 
@@ -29,8 +29,11 @@ examples/pointer.s: examples/c-to-asm.sbnf examples/pointer.c
 examples/dptr.s: examples/c-to-asm.sbnf examples/dptr.c
 	python -m engine examples/c-to-asm.sbnf examples/dptr.c examples/dptr.s
 
+examples/sprintf.s: examples/c-to-asm.sbnf examples/sprintf.sbnfc
+	python -m engine examples/c-to-asm.sbnf examples/sprintf.sbnfc examples/sprintf.s
+
 # Assemble .s → executable for x86-64
-examples/counter examples/scope examples/pascal examples/pointer examples/dptr:
+examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf:
 	clang -arch x86_64 -c $(filter %.s,$^) -o $(@:.o=).o && \
 	clang -arch x86_64 $(@:.o=).o -o $@ -lSystem
 
@@ -39,10 +42,11 @@ examples/scope: examples/scope.s
 examples/pascal: examples/pascal.s
 examples/pointer: examples/pointer.s
 examples/dptr: examples/dptr.s
+examples/sprintf: examples/sprintf.s
 
 # ── Programs (ARM64) ────────────────────────────────────────────────────────
 
-ARM64_PROGRAMS := examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64
+ARM64_PROGRAMS := examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64
 
 examples/counter-arm64.s: examples/c-to-asm-arm64.sbnf examples/counter.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/counter.c examples/counter-arm64.s
@@ -59,7 +63,10 @@ examples/pointer-arm64.s: examples/c-to-asm-arm64.sbnf examples/pointer.c
 examples/dptr-arm64.s: examples/c-to-asm-arm64.sbnf examples/dptr.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/dptr.c examples/dptr-arm64.s
 
-examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64:
+examples/sprintf-arm64.s: examples/c-to-asm-arm64.sbnf examples/sprintf.sbnfc
+	python -m engine examples/c-to-asm-arm64.sbnf examples/sprintf.sbnfc examples/sprintf-arm64.s
+
+examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64:
 	clang -arch arm64 -c $(filter %.s,$^) -o $(@:.o=).o && \
 	clang -arch arm64 $(@:.o=).o -o $@ -lSystem
 
@@ -68,6 +75,7 @@ examples/scope-arm64: examples/scope-arm64.s
 examples/pascal-arm64: examples/pascal-arm64.s
 examples/pointer-arm64: examples/pointer-arm64.s
 examples/dptr-arm64: examples/dptr-arm64.s
+examples/sprintf-arm64: examples/sprintf-arm64.s
 
 # ── Targets ─────────────────────────────────────────────────────────────────
 
@@ -75,12 +83,12 @@ all: $(PROGRAMS)
 
 all-arm64: $(ARM64_PROGRAMS)
 
-asm: examples/counter.s examples/scope.s examples/pascal.s
+asm: examples/counter.s examples/scope.s examples/pascal.s examples/sprintf.s
 
-asm-arm64: $(ARM64_PROGRAMS:%=%-arm64.s)
+asm-arm64: $(ARM64_PROGRAMS:%=%.s)
 
 clean:
-	rm -f examples/*.s examples/*.bin examples/*.o examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/*-arm64
+	rm -f examples/*.s examples/*.bin examples/*.o examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/*-arm64
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -121,6 +129,12 @@ test-dptr: examples/dptr
 	printf "5\n42\n" > /tmp/dptr-expected.txt; \
 	diff /tmp/dptr-out.txt /tmp/dptr-expected.txt && echo "PASS" || echo "FAIL"
 
+test-sprintf: examples/sprintf
+	@echo "=== sprintf: run ==="
+	$(GTIMEOUT) 2 ./examples/sprintf > /tmp/sprintf-out.txt 2>&1; \
+	printf "42\n" > /tmp/sprintf-expected.txt; \
+	diff /tmp/sprintf-out.txt /tmp/sprintf-expected.txt && echo "PASS" || echo "FAIL"
+
 # ── ARM64 Tests ──────────────────────────────────────────────────────────────
 
 test-arm64-counter: examples/counter-arm64
@@ -153,15 +167,20 @@ test-arm64-dptr: examples/dptr-arm64
 	printf "5\n42\n" > /tmp/arm64-dptr-expected.txt; \
 	diff /tmp/arm64-dptr-out.txt /tmp/arm64-dptr-expected.txt && echo "PASS" || echo "FAIL"
 
-test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr
+test-arm64-sprintf: examples/sprintf-arm64
+	@echo "=== arm64 sprintf ==="
+	$(GTIMEOUT) 2 ./examples/sprintf-arm64 > /tmp/arm64-sprintf-out.txt 2>&1; \
+	printf "42\n" > /tmp/arm64-sprintf-expected.txt; \
+	diff /tmp/arm64-sprintf-out.txt /tmp/arm64-sprintf-expected.txt && echo "PASS" || echo "FAIL"
+
+test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr test-arm64-sprintf
 	@echo "=== all ARM64 tests pass ==="
 
 test-stack:
 	@echo "=== stack allocation intensive tests ==="
 	bash examples/test_stack.sh
 
-test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-arm64 test-stack
+test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-sprintf test-arm64 test-stack
 	@echo "=== all tests pass ==="
 
 test: test-full
-

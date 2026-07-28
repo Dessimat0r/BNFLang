@@ -42,7 +42,9 @@ Stmt ::=
     "printn" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "str x0, [sp]" + "\n" + "adrp x0, fmtn@PAGE" + "\n" + "add x0, x0, fmtn@PAGEOFF" + "\n" + "bl _printf" |
 
     "print" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "str x0, [sp]" + "\n" + "adrp x0, fmt@PAGE" + "\n" + "add x0, x0, fmt@PAGEOFF" + "\n" + "bl _printf" |
-    "*" PtrChain:ptr "=" /[^;]+/:val ";"
+    "sprintf" /[a-zA-Z_@0-9]+/:buf /[^;]+/:val ";"
+    => LET(val_asm, RULE("Expr", val), LET(buf_off, RULE("OffOf", buf + "\x00" + val), val_asm + "\n" + "str x0, [sp]" + "\n" + "sub x0, x29, #" + buf_off + "\n" + "adrp x1, fmt@PAGE" + "\n" + "add x1, x1, fmt@PAGEOFF" + "\n" + "bl _sprintf"))
+  | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => LET(val_asm, RULE("Expr", val), ptr + "\n" + "str x0, [sp, #-16]!" + "\n" + val_asm + "\n" + "ldr x1, [sp], #16" + "\n" + "str w0, [x1]")
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";" => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\n" + "str w0, [x29, #-" + off + "]")
   | "{" => "" | "}" => "" | /[\s]+/:ws => "" | /./:c => c

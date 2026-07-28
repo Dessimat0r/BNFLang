@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.grammar import Grammar
 from engine.matcher import match_grammar
+from engine.c_prep import preprocess_sbnfc
 
 
 def main():
@@ -21,6 +22,10 @@ def main():
 
     with open(input_path) as f:
         input_text = f.read()
+
+    # Preprocess .sbnfc files
+    if input_path.endswith('.sbnfc'):
+        input_text = preprocess_sbnfc(input_text)
 
     # Escape null bytes so \x00 can be used as field separator
     input_text = input_text.replace('\x00', '\\x00')

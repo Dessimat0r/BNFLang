@@ -42,7 +42,10 @@ Stmt ::=
 %for kw, fmt in [("printn", "fmtn"), ("print", "fmt")] {
     "{kw}" /[^;]+/:val ";" => RULE("Expr", val) \+ "mov esi, eax" \+ "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf" |
 }
-    "*" PtrChain:ptr "=" /[^;]+/:val ";"
+    "sprintf" $VAR:buf /[^;]+/:val ";"
+    => let val_asm = RULE("Expr", val); let buf_off = RULE("OffOf", buf + "\x00" + val);
+       "lea rdi, [rbp-" + buf_off + "]" \+ "lea rsi, [rip + fmt]" \+ val_asm \+ "mov edx, eax" \+ "xor eax, eax" \+ "call _sprintf"
+  | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => let val_asm = RULE("Expr", val); ptr \+ "push rax" \+ val_asm \+ "pop rcx" \+ "mov DWORD PTR [rcx], eax"
   | $VAR:name "=" /[^;]+/:val ";" => let off = RULE("OffOf", name + "\x00" + val); RULE("Expr", val) \+ "mov DWORD PTR [rbp-" + off + "], eax"
   | "{" => "" | "}" => "" | /[\s]+/:ws => "" | /./:c => c
