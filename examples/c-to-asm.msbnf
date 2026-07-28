@@ -11,15 +11,31 @@ Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
 TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(ref_off, RULE("OffOfPtr", ref), LET(anno, v + "@" + n, LET(new_i, i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
+    => let new_n = n + "8";
+       let ref_off = RULE("OffOfPtr", ref);
+       let anno = v + "@" + n;
+       let new_i = i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(ref_off, RULE("OffOfPtr", ref), LET(anno, v + "@" + n, LET(new_i, i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
+    => let new_n = n + "8";
+       let ref_off = RULE("OffOfPtr", ref);
+       let anno = v + "@" + n;
+       let new_i = i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))))
+    => let new_n = n + "8";
+       let anno = v + "@" + n;
+       RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[0-9]+/:val ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "mov DWORD PTR [rbp-" + n + "], " + val + "\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+    => let new_n = n + "8";
+       let anno = v + "@" + n;
+       let new_i = i + "mov DWORD PTR [rbp-" + n + "], " + val + "\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+    => let new_n = n + "8";
+       let anno = v + "@" + n;
+       let new_i = i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
      + ".text\n.globl _main\n.intel_syntax noprefix\n"
@@ -53,9 +69,11 @@ Stmt ::=
   | "print" /[^;]+/:val ";"
     => RULE("Expr", val) + "\nmov esi, eax\nlea rdi, [rip + fmt]\nxor eax, eax\ncall _printf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
-    => LET(val_asm, RULE("Expr", val), ptr + "\npush rax\n" + val_asm + "\npop rcx\nmov DWORD PTR [rcx], eax")
+    => let val_asm = RULE("Expr", val);
+       ptr + "\npush rax\n" + val_asm + "\npop rcx\nmov DWORD PTR [rcx], eax"
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";"
-    => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\nmov DWORD PTR [rbp-" + off + "], eax")
+    => let off = RULE("OffOf", name + "\x00" + val);
+       RULE("Expr", val) + "\nmov DWORD PTR [rbp-" + off + "], eax"
   | "{" => ""
   | "}" => ""
   | /[\s]+/:ws => ""

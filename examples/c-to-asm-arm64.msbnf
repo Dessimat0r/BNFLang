@@ -11,15 +11,31 @@ Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
 TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(ref_off, RULE("OffOfPtr", ref), LET(anno, v + "@" + n, LET(new_i, i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
+    => let new_n = n + "8";
+       let ref_off = RULE("OffOfPtr", ref);
+       let anno = v + "@" + n;
+       let new_i = i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(ref_off, RULE("OffOfPtr", ref), LET(anno, v + "@" + n, LET(new_i, i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
+    => let new_n = n + "8";
+       let ref_off = RULE("OffOfPtr", ref);
+       let anno = v + "@" + n;
+       let new_i = i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))))
+    => let new_n = n + "8";
+       let anno = v + "@" + n;
+       RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" "0" ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "str wzr, [x29, #-" + n + "]\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+    => let new_n = n + "8";
+       let anno = v + "@" + n;
+       let new_i = i + "str wzr, [x29, #-" + n + "]\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "mov w0, " + val + "\nstr w0, [x29, #-" + n + "]\n", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+    => let new_n = n + "8";
+       let anno = v + "@" + n;
+       let new_i = i + "mov w0, " + val + "\nstr w0, [x29, #-" + n + "]\n";
+       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
      + ".text\n.globl _main\n"
@@ -53,9 +69,11 @@ Stmt ::=
   | "print" /[^;]+/:val ";"
     => RULE("Expr", val) + "\nstr x0, [sp]\nadrp x0, fmt@PAGE\nadd x0, x0, fmt@PAGEOFF\nbl _printf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
-    => LET(val_asm, RULE("Expr", val), ptr + "\nstr x0, [sp, #-16]!\n" + val_asm + "\nldr x1, [sp], #16\nstr w0, [x1]")
+    => let val_asm = RULE("Expr", val);
+       ptr + "\nstr x0, [sp, #-16]!\n" + val_asm + "\nldr x1, [sp], #16\nstr w0, [x1]"
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";"
-    => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\nstr w0, [x29, #-" + off + "]")
+    => let off = RULE("OffOf", name + "\x00" + val);
+       RULE("Expr", val) + "\nstr w0, [x29, #-" + off + "]"
   | "{" => ""
   | "}" => ""
   | /[\s]+/:ws => ""

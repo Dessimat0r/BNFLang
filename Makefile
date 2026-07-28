@@ -6,6 +6,13 @@ GTIMEOUT := $(shell command -v gtimeout 2>/dev/null || echo "gtimeout")
 
 PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr
 
+# Compile .msbnf → .sbnf
+examples/c-to-asm.sbnf: examples/c-to-asm.msbnf
+	python -m engine.msbnf examples/c-to-asm.msbnf examples/c-to-asm.sbnf
+
+examples/c-to-asm-arm64.sbnf: examples/c-to-asm-arm64.msbnf
+	python -m engine.msbnf examples/c-to-asm-arm64.msbnf examples/c-to-asm-arm64.sbnf
+
 # Compile .c → .s via our grammar
 examples/counter.s: examples/c-to-asm.sbnf examples/counter.c
 	python -m engine examples/c-to-asm.sbnf examples/counter.c examples/counter.s
