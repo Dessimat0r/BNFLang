@@ -149,7 +149,12 @@ test-arm64-dptr: examples/dptr-arm64
 test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr
 	@echo "=== all ARM64 tests pass ==="
 
-test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-arm64
+test-stack:
+	@echo "=== stack allocation intensive tests ==="
+	bash examples/test_stack.sh
+
+test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-arm64 test-stack
 	@echo "=== all tests pass ==="
 
 test: test-full
+

@@ -1,0 +1,18 @@
+int a = 50;
+int b = 7;
+int c = 3;
+int r = 0;
+r = a / b;
+print r;
+r = a / c;
+print r;
+r = (a + b) / c;
+print r;
+r = a / (b - c);
+print r;
+r = (a * 2) / (b + c);
+print r;
+r = a / b + a / c;
+print r;
+r = (a + 1) / (b - 1);
+print r;

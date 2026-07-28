@@ -1,0 +1,18 @@
+int a = 1;
+int b = 2;
+int c = 3;
+int d = 4;
+int e = 5;
+int f = 6;
+int g = 7;
+int h = 8;
+print a;
+print b;
+print c;
+print d;
+print e;
+print f;
+print g;
+print h;
+print a + b + c + d;
+print e + f + g + h;

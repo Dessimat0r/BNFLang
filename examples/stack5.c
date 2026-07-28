@@ -1,0 +1,17 @@
+int a = 5;
+int b = 10;
+int *p = &a;
+int *q = &b;
+int **pp = &p;
+print *p;
+print *q;
+*p = *q;
+print *p;
+print a;
+*q = 42;
+print *q;
+print b;
+print **pp;
+**pp = 99;
+print a;
+print *p;
