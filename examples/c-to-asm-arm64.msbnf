@@ -20,7 +20,7 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n"
      + ".text\n.globl _main\n"
-     + "_main:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + RULE("Ceil16", n) + "\n"
+     + "_main:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + RULE("Ceil16", n + "32") + "\n"
      + i
      + RULE("Stmts", "0\x00" + c)
      + "mov sp, x29\nldp x29, x30, [sp], #16\nret\n"
@@ -115,7 +115,7 @@ LoadQWord    ::= $VAR_OFF => "ldr x0, [x29, #-" + off + "]" | $IDENT:name => "ld
 AddrOf       ::= $VAR_OFF => "sub x0, x29, #" + off
 
 Ceil16 ::=
-%for k in range(4, 257, 4) {
+%for k in range(4, 289, 4) {
     "{k}" => "{((k + 15) // 16) * 16}" |
 }
     "0" => "0" | $NUM:n => n

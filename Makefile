@@ -160,7 +160,7 @@ test-datatypes: examples/datatypes
 test-multi_sprintf: examples/multi_sprintf
 	@echo "=== multi_sprintf: run ==="
 	$(GTIMEOUT) 2 ./examples/multi_sprintf > /tmp/multi_sprintf-out.txt 2>&1; \
-	printf "10 20 30\n" > /tmp/multi_sprintf-expected.txt; \
+	printf "10 20 60\n" > /tmp/multi_sprintf-expected.txt; \
 	diff /tmp/multi_sprintf-out.txt /tmp/multi_sprintf-expected.txt && echo "PASS" || echo "FAIL"
 
 # ── ARM64 Tests ──────────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ test-arm64-scope: examples/scope-arm64
 test-arm64-pascal: examples/pascal-arm64
 	@echo "=== arm64 pascal ==="
 	$(GTIMEOUT) 2 ./examples/pascal-arm64 > /tmp/arm64-pascal-out.txt 2>&1; \
-	printf "    1 \n   1 1 \n  1 2 1 \n 1 3 3 1 \n1 4 6 4 1 \n" > /tmp/arm64-pascal-expected.txt; \
+	printf "    1 \n   1 1 \n  1 2 1 \n 1 3 3 1 \n1 4 6 4 1 \n" > /tmp/pascal-expected.txt; \
 	diff /tmp/arm64-pascal-out.txt /tmp/arm64-pascal-expected.txt && echo "PASS" || echo "FAIL"
 
 test-arm64-pointer: examples/pointer-arm64
@@ -210,7 +210,7 @@ test-arm64-datatypes: examples/datatypes-arm64
 test-arm64-multi_sprintf: examples/multi_sprintf-arm64
 	@echo "=== arm64 multi_sprintf ==="
 	$(GTIMEOUT) 2 ./examples/multi_sprintf-arm64 > /tmp/arm64-multi_sprintf-out.txt 2>&1; \
-	printf "10 20 30\n" > /tmp/arm64-multi_sprintf-expected.txt; \
+	printf "10 20 60\n" > /tmp/arm64-multi_sprintf-expected.txt; \
 	diff /tmp/arm64-multi_sprintf-out.txt /tmp/arm64-multi_sprintf-expected.txt && echo "PASS" || echo "FAIL"
 
 test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr test-arm64-sprintf test-arm64-datatypes test-arm64-multi_sprintf

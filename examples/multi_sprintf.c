@@ -5,7 +5,7 @@ int main() {
     int b = 20;
     int c = 30;
     char buf[64];
-    sprintf(buf, "%d %d %d", a, b, c);
-    printf("%d %d %d\n", a, b, c);
+    sprintf(buf, "%d %d %d", a, b, a + b + c);
+    printf("%d %d %d\n", a, b, a + b + c);
     return 0;
 }

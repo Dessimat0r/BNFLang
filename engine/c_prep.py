@@ -4,6 +4,18 @@ import re
 
 INCLUDE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "include")
 
+tmp_counter = 0
+
+def get_tmp_var(expr, raw_lines):
+    global tmp_counter
+    expr = expr.strip()
+    if re.match(r'^[a-zA-Z_]\w*$', expr):
+        return expr
+    tmp_counter += 1
+    tname = f"_tmp{tmp_counter}"
+    raw_lines.append(f"int {tname} = {expr};")
+    return tname
+
 def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=None, struct_vars=None):
     """
     Preprocess C source code into normalized statements for SBNF compilation.
@@ -69,7 +81,6 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         arr_m = re.match(r'^(?:char|int|short|long|int\d+_t)\s+([a-zA-Z_]\w*)\[\d+\]\s*;', sline)
         if arr_m:
             arr_var = arr_m.group(1)
-            # Emit 7 dummy 8-byte variables + main var = 64 bytes stack allocation
             for k in range(7):
                 raw_lines.append(f"int {arr_var}_pad{k} = 0;")
             raw_lines.append(f"int {arr_var} = 0;")
@@ -132,12 +143,17 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         # 8. Normalize multi-argument printf calls:
         m3 = re.match(r'^printf\s*\(\s*"[^"]*%d[^"]*%d[^"]*%d[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
         if m3:
-            raw_lines.append(f"print3 {m3.group(1)} {m3.group(2)} {m3.group(3)};")
+            v1 = get_tmp_var(m3.group(1), raw_lines)
+            v2 = get_tmp_var(m3.group(2), raw_lines)
+            v3 = get_tmp_var(m3.group(3), raw_lines)
+            raw_lines.append(f"print3 {v1} {v2} {v3};")
             continue
 
         m2 = re.match(r'^printf\s*\(\s*"[^"]*%d[^"]*%d[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
         if m2:
-            raw_lines.append(f"print2 {m2.group(1)} {m2.group(2)};")
+            v1 = get_tmp_var(m2.group(1), raw_lines)
+            v2 = get_tmp_var(m2.group(2), raw_lines)
+            raw_lines.append(f"print2 {v1} {v2};")
             continue
 
         m = re.match(r'^printf\s*\(\s*"%d\\n"\s*,\s*(.*?)\s*\)\s*;', sline)
@@ -168,12 +184,19 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         # 9. Normalize multi-argument sprintf calls:
         sm3 = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
         if sm3:
-            raw_lines.append(f"sprintf3 {sm3.group(1)} {sm3.group(2)} {sm3.group(3)} {sm3.group(4)};")
+            buf = sm3.group(1)
+            v1 = get_tmp_var(sm3.group(2), raw_lines)
+            v2 = get_tmp_var(sm3.group(3), raw_lines)
+            v3 = get_tmp_var(sm3.group(4), raw_lines)
+            raw_lines.append(f"sprintf3 {buf} {v1} {v2} {v3};")
             continue
 
         sm2 = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
         if sm2:
-            raw_lines.append(f"sprintf2 {sm2.group(1)} {sm2.group(2)} {sm2.group(3)};")
+            buf = sm2.group(1)
+            v1 = get_tmp_var(sm2.group(2), raw_lines)
+            v2 = get_tmp_var(sm2.group(3), raw_lines)
+            raw_lines.append(f"sprintf2 {buf} {v1} {v2};")
             continue
 
         m = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"%d"\s*,\s*(.*?)\s*\)\s*;', sline)
