@@ -4,7 +4,7 @@ GTIMEOUT := $(shell command -v gtimeout 2>/dev/null || echo "gtimeout")
 
 # ── Programs (x86-64) ───────────────────────────────────────────────────────
 
-PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf
+PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes
 
 # Compile .msbnf → .sbnf
 examples/c-to-asm.sbnf: examples/c-to-asm.msbnf
@@ -13,7 +13,7 @@ examples/c-to-asm.sbnf: examples/c-to-asm.msbnf
 examples/c-to-asm-arm64.sbnf: examples/c-to-asm-arm64.msbnf
 	python -m engine.msbnf examples/c-to-asm-arm64.msbnf examples/c-to-asm-arm64.sbnf
 
-# Compile .c / .sbnfc → .s via our grammar
+# Compile .c → .s via our grammar
 examples/counter.s: examples/c-to-asm.sbnf examples/counter.c
 	python -m engine examples/c-to-asm.sbnf examples/counter.c examples/counter.s
 
@@ -32,8 +32,11 @@ examples/dptr.s: examples/c-to-asm.sbnf examples/dptr.c
 examples/sprintf.s: examples/c-to-asm.sbnf examples/sprintf.c
 	python -m engine examples/c-to-asm.sbnf examples/sprintf.c examples/sprintf.s
 
+examples/datatypes.s: examples/c-to-asm.sbnf examples/datatypes.c
+	python -m engine examples/c-to-asm.sbnf examples/datatypes.c examples/datatypes.s
+
 # Assemble .s → executable for x86-64
-examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf:
+examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes:
 	clang -arch x86_64 -c $(filter %.s,$^) -o $(@:.o=).o && \
 	clang -arch x86_64 $(@:.o=).o -o $@ -lSystem
 
@@ -43,10 +46,11 @@ examples/pascal: examples/pascal.s
 examples/pointer: examples/pointer.s
 examples/dptr: examples/dptr.s
 examples/sprintf: examples/sprintf.s
+examples/datatypes: examples/datatypes.s
 
 # ── Programs (ARM64) ────────────────────────────────────────────────────────
 
-ARM64_PROGRAMS := examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64
+ARM64_PROGRAMS := examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64 examples/datatypes-arm64
 
 examples/counter-arm64.s: examples/c-to-asm-arm64.sbnf examples/counter.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/counter.c examples/counter-arm64.s
@@ -66,7 +70,10 @@ examples/dptr-arm64.s: examples/c-to-asm-arm64.sbnf examples/dptr.c
 examples/sprintf-arm64.s: examples/c-to-asm-arm64.sbnf examples/sprintf.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/sprintf.c examples/sprintf-arm64.s
 
-examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64:
+examples/datatypes-arm64.s: examples/c-to-asm-arm64.sbnf examples/datatypes.c
+	python -m engine examples/c-to-asm-arm64.sbnf examples/datatypes.c examples/datatypes-arm64.s
+
+examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64 examples/datatypes-arm64:
 	clang -arch arm64 -c $(filter %.s,$^) -o $(@:.o=).o && \
 	clang -arch arm64 $(@:.o=).o -o $@ -lSystem
 
@@ -76,6 +83,7 @@ examples/pascal-arm64: examples/pascal-arm64.s
 examples/pointer-arm64: examples/pointer-arm64.s
 examples/dptr-arm64: examples/dptr-arm64.s
 examples/sprintf-arm64: examples/sprintf-arm64.s
+examples/datatypes-arm64: examples/datatypes-arm64.s
 
 # ── Targets ─────────────────────────────────────────────────────────────────
 
@@ -83,12 +91,12 @@ all: $(PROGRAMS)
 
 all-arm64: $(ARM64_PROGRAMS)
 
-asm: examples/counter.s examples/scope.s examples/pascal.s examples/sprintf.s
+asm: examples/counter.s examples/scope.s examples/pascal.s examples/sprintf.s examples/datatypes.s
 
 asm-arm64: $(ARM64_PROGRAMS:%=%.s)
 
 clean:
-	rm -f examples/*.s examples/*.bin examples/*.o examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/*-arm64
+	rm -f examples/*.s examples/*.bin examples/*.o examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/*-arm64
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -135,6 +143,12 @@ test-sprintf: examples/sprintf
 	printf "42\n" > /tmp/sprintf-expected.txt; \
 	diff /tmp/sprintf-out.txt /tmp/sprintf-expected.txt && echo "PASS" || echo "FAIL"
 
+test-datatypes: examples/datatypes
+	@echo "=== datatypes: run ==="
+	$(GTIMEOUT) 2 ./examples/datatypes > /tmp/datatypes-out.txt 2>&1; \
+	printf "42\n" > /tmp/datatypes-expected.txt; \
+	diff /tmp/datatypes-out.txt /tmp/datatypes-expected.txt && echo "PASS" || echo "FAIL"
+
 # ── ARM64 Tests ──────────────────────────────────────────────────────────────
 
 test-arm64-counter: examples/counter-arm64
@@ -173,14 +187,20 @@ test-arm64-sprintf: examples/sprintf-arm64
 	printf "42\n" > /tmp/arm64-sprintf-expected.txt; \
 	diff /tmp/arm64-sprintf-out.txt /tmp/arm64-sprintf-expected.txt && echo "PASS" || echo "FAIL"
 
-test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr test-arm64-sprintf
+test-arm64-datatypes: examples/datatypes-arm64
+	@echo "=== arm64 datatypes ==="
+	$(GTIMEOUT) 2 ./examples/datatypes-arm64 > /tmp/arm64-datatypes-out.txt 2>&1; \
+	printf "42\n" > /tmp/arm64-datatypes-expected.txt; \
+	diff /tmp/arm64-datatypes-out.txt /tmp/arm64-datatypes-expected.txt && echo "PASS" || echo "FAIL"
+
+test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr test-arm64-sprintf test-arm64-datatypes
 	@echo "=== all ARM64 tests pass ==="
 
 test-stack:
 	@echo "=== stack allocation intensive tests ==="
 	bash examples/test_stack.sh
 
-test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-sprintf test-arm64 test-stack
+test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-sprintf test-datatypes test-arm64 test-stack
 	@echo "=== all tests pass ==="
 
 test: test-full

@@ -1,35 +1,96 @@
 import sys
+import os
 import re
 
-def preprocess_sbnfc(src):
+INCLUDE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "include")
+
+def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=None, struct_vars=None):
     """
-    Preprocess .c source code into normalized statements for SBNF compilation.
-    - Strips #include directives
+    Preprocess C source code into normalized statements for SBNF compilation.
+    - Resolves #include <header.h> from include/ directory
+    - Resolves typedef statements
+    - Desugars struct declarations and member access (s.field -> s_field)
+    - Hoists mixed declarations to top of block for C99 compliance
     - Strips main() function wrappers (int main() { ... return 0; })
-    - Normalizes printf(...) calls:
-        printf("%d\n", val); -> print val;
-        printf("%d ", val);  -> printn val;
-        printf("\n");        -> println;
-        printf(" ");         -> printsp;
-    - Normalizes sprintf(buf, "%d", val); -> sprintf buf val;
+    - Normalizes printf(...) and sprintf(...)
     """
-    has_main = 'main' in src
+    if processed_includes is None:
+        processed_includes = set()
+    if typedefs is None:
+        typedefs = {}
+    if struct_defs is None:
+        struct_defs = {}
+    if struct_vars is None:
+        struct_vars = {}
+
     lines = src.split("\n")
-    out = []
+    raw_lines = []
+    has_main = 'main' in src
     in_main = False
     brace_depth = 0
+    current_struct = None
 
     for line in lines:
         sline = line.strip()
-        # 1. Strip #include
-        if sline.startswith("#include"):
+        if not sline:
             continue
 
-        # 2. Strip return statements in main
+        # 1. Handle #include <file.h> or "file.h"
+        inc_m = re.match(r'^#include\s+[<"]([^>"]+)[>"]', sline)
+        if inc_m:
+            header_name = inc_m.group(1)
+            if header_name not in processed_includes:
+                processed_includes.add(header_name)
+                header_path = os.path.join(INCLUDE_DIR, header_name)
+                if os.path.exists(header_path):
+                    with open(header_path, "r", encoding="utf-8") as f:
+                        header_src = f.read()
+                    header_out = preprocess_sbnfc(header_src, processed_includes, typedefs, struct_defs, struct_vars)
+                    if header_out:
+                        raw_lines.extend([l for l in header_out.split("\n") if l.strip()])
+            continue
+
+        # Strip preprocessor guards / directives
+        if sline.startswith("#"):
+            continue
+
+        # 2. Handle typedef
+        td_m = re.match(r'^typedef\s+(.+?)\s+([a-zA-Z_]\w*)\s*;', sline)
+        if td_m:
+            base_type = td_m.group(1).strip()
+            alias = td_m.group(2).strip()
+            typedefs[alias] = base_type
+            continue
+
+        # Apply typedef replacements
+        for alias, base in typedefs.items():
+            sline = re.sub(rf'\b{alias}\b', base, sline)
+
+        # 3. Handle struct definitions: struct Point { int x; int y; };
+        st_def_m = re.match(r'^struct\s+([a-zA-Z_]\w*)\s*\{', sline)
+        if st_def_m:
+            current_struct = st_def_m.group(1)
+            struct_defs[current_struct] = []
+            continue
+
+        if current_struct:
+            if sline.startswith("};") or sline == "}":
+                current_struct = None
+                continue
+            mem_m = re.match(r'^(?:[a-zA-Z_]\w*)\s+\*?\s*([a-zA-Z_]\w*)\s*;', sline)
+            if mem_m:
+                struct_defs[current_struct].append(mem_m.group(1))
+                continue
+
+        # Skip function prototypes (e.g. int printf(...);)
+        if re.match(r'^(?:int|void|char|long|short)\s+[a-zA-Z_]\w*\s*\([^)]*\)\s*;', sline):
+            continue
+
+        # 4. Handle return statements in main
         if sline.startswith("return"):
             continue
 
-        # 3. Strip main function declaration / outer braces if main() exists
+        # 5. Handle main function declaration / outer braces if main() exists
         if has_main:
             if re.match(r'^int\s+main\s*\([^)]*\)\s*\{?', sline):
                 in_main = True
@@ -40,44 +101,85 @@ def preprocess_sbnfc(src):
                     brace_depth = 0
                     in_main = False
                     continue
-                # Update brace depth for inner blocks
                 brace_depth += sline.count('{') - sline.count('}')
 
-        # 4. Normalize printf calls
+        # 6. Desugar struct instance declaration: struct Point p;
+        st_inst_m = re.match(r'^struct\s+([a-zA-Z_]\w*)\s+([a-zA-Z_]\w*)\s*;', sline)
+        if st_inst_m:
+            st_type = st_inst_m.group(1)
+            var_name = st_inst_m.group(2)
+            struct_vars[var_name] = st_type
+            if st_type in struct_defs:
+                for mem in struct_defs[st_type]:
+                    raw_lines.append(f"int {var_name}_{mem} = 0;")
+            continue
+
+        # 7. Desugar struct member access (var.member -> var_member)
+        for var_name, st_type in struct_vars.items():
+            if st_type in struct_defs:
+                for mem in struct_defs[st_type]:
+                    sline = re.sub(rf'\b{var_name}\.{mem}\b', f"{var_name}_{mem}", sline)
+
+        # 8. Normalize printf calls
         m = re.match(r'^printf\s*\(\s*"%d\\n"\s*,\s*(.*?)\s*\)\s*;', sline)
         if m:
-            out.append(f"print {m.group(1)};")
+            raw_lines.append(f"print {m.group(1)};")
             continue
 
         m = re.match(r'^printf\s*\(\s*"%d "\s*,\s*(.*?)\s*\)\s*;', sline)
         if m:
-            out.append(f"printn {m.group(1)};")
+            raw_lines.append(f"printn {m.group(1)};")
             continue
 
         m = re.match(r'^printf\s*\(\s*"\\n"\s*\)\s*;', sline)
         if m:
-            out.append("println;")
+            raw_lines.append("println;")
             continue
 
-        m = re.match(r'^printf\s*\(\s*" "\s*\)\s*;', sline)
+        m = re.match(r'^printf\s*\(\s*"\s+"\s*\)\s*;', sline)
         if m:
-            out.append("printsp;")
+            raw_lines.append("printsp;")
             continue
 
         m = re.match(r'^printf\s*\(\s*"%d"\s*,\s*(.*?)\s*\)\s*;', sline)
         if m:
-            out.append(f"printn {m.group(1)};")
+            raw_lines.append(f"printn {m.group(1)};")
             continue
 
-        # 5. Normalize sprintf calls
+        # 9. Normalize sprintf calls
         m = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"%d"\s*,\s*(.*?)\s*\)\s*;', sline)
         if m:
-            out.append(f"sprintf {m.group(1)} {m.group(2)};")
+            raw_lines.append(f"sprintf {m.group(1)} {m.group(2)};")
             continue
 
-        out.append(line)
+        raw_lines.append(sline)
 
-    return "\n".join(out)
+    # Separate declarations vs statements to hoist all decls to top
+    decls = []
+    stmts = []
+
+    type_pattern = re.compile(r'^(?:long\s+long|char|short|int|long|void)\s+\*?\s*[a-zA-Z_]\w*')
+
+    for l in raw_lines:
+        if type_pattern.match(l.strip()):
+            # If it's a declaration with expression, split into decl + assignment if complex
+            decl_m = re.match(r'^((?:long\s+long|char|short|int|long|void)\s+\*?\s*[a-zA-Z_]\w*)\s*=\s*(.+);$', l.strip())
+            if decl_m:
+                var_decl = decl_m.group(1)
+                expr_val = decl_m.group(2)
+                # If expression is literal int, keep inline; else hoist assignment
+                if re.match(r'^\d+$', expr_val) or expr_val.startswith('&'):
+                    decls.append(l)
+                else:
+                    var_name = var_decl.split()[-1].lstrip('*')
+                    decls.append(f"{var_decl} = 0;")
+                    stmts.append(f"{var_name} = {expr_val};")
+            else:
+                decls.append(l)
+        else:
+            stmts.append(l)
+
+    return "\n".join(decls + stmts)
 
 def main():
     if len(sys.argv) < 3:

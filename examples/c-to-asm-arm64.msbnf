@@ -3,7 +3,7 @@
 // Operators: + - * / < <=
 
 $IDENT = /[a-zA-Z_]\w*/
-$DECL_HDR = $NUM:n "\x00" /[^\x00]*/:i "\x00int "
+$DECL_HDR = $NUM:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/
 
 Program ::= /[\s\S]*/:src => RULE("Decls", "4\x00\x00" + src)
 
@@ -15,7 +15,8 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => DECL(v, n, i, c, "sub x16, x29, #" + RULE("OffOf", ref) \+ "str x16, [x29, #-" + n + "]" \+ "")
   | $DECL_HDR /\*+/ $IDENT:v ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "")
   | $DECL_HDR $IDENT:v "=" "0" ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "str wzr, [x29, #-" + n + "]" \+ "")
-  | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c => DECL(v, n, i, c, "mov w0, " + val \+ "str w0, [x29, #-" + n + "]" \+ "")
+  | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
+    => let val_asm = RULE("Expr", val); DECL(v, n, i, c, val_asm \+ "str w0, [x29, #-" + n + "]" \+ "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
      + ".text\n.globl _main\n"
