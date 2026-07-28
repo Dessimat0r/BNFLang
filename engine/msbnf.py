@@ -22,13 +22,20 @@ def compile_msbnf(text):
     # 2. Expand %for loops
     text = expand_for_loops(text)
 
-    # 3. Expand pattern aliases ($NO_MUL:label -> regex:label)
+    # 3. Desugar \+ (newline-concat operator)
+    text = desugar_newline_concat(text)
+
+    # 4. Expand pattern aliases ($NO_MUL:label -> regex:label)
     text = expand_aliases(text, aliases)
 
-    # 4. Desugar sequential let statements in action expressions
+    # 5. Desugar sequential let statements in action expressions
     text = desugar_let_actions(text)
 
     return text.strip() + "\n"
+
+def desugar_newline_concat(text):
+    """Replace `\\+` with `+ "\\n" +` in action expressions."""
+    return re.sub(r'\\\+', r'+ "\\n" +', text)
 
 def extract_custom_aliases(text):
     custom = {}
@@ -44,13 +51,7 @@ def extract_custom_aliases(text):
     return "\n".join(out_lines), custom
 
 def expand_for_loops(text):
-    """
-    Expand %for loop blocks with balanced brace matching.
-    Syntax:
-    %for val, shift in [("4","2"), ("8","3")] {
-        | $NO_MUL:l "*" "{val}" => RULE("Expr", l) + "\nshl eax, {shift}"
-    }
-    """
+    """Expand %for loop blocks with balanced brace matching."""
     pos = 0
     out = []
     while pos < len(text):
@@ -69,7 +70,6 @@ def expand_for_loops(text):
         except Exception as e:
             raise ValueError(f"Failed to parse %for loop items: {items_str} - {e}")
 
-        # Find matching closing brace }
         start_body = pos + m.end()
         depth = 1
         i = start_body
@@ -93,7 +93,6 @@ def expand_for_loops(text):
             sub_body = body
             for var_name, var_val in zip(var_names, item):
                 val_str = str(var_val)
-                # Replace {var_name} placeholders
                 sub_body = sub_body.replace("{" + var_name + "}", val_str)
 
             expanded_lines.append(sub_body)

@@ -16,13 +16,13 @@ TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v "=" "&" $VAR:ref 
     => let new_n = n + "8";
        let ref_off = RULE("OffOfPtr", ref);
        let anno = v + "@" + n;
-       let new_i = i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n";
+       let new_i = i + "sub x16, x29, #" + ref_off \+ "str x16, [x29, #-" + n + "]" \+ "";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let ref_off = RULE("OffOfPtr", ref);
        let anno = v + "@" + n;
-       let new_i = i + "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + n + "]\n";
+       let new_i = i + "sub x16, x29, #" + ref_off \+ "str x16, [x29, #-" + n + "]" \+ "";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
@@ -31,12 +31,12 @@ TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v "=" "&" $VAR:ref 
   | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" "0" ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let anno = v + "@" + n;
-       let new_i = i + "str wzr, [x29, #-" + n + "]\n";
+       let new_i = i + "str wzr, [x29, #-" + n + "]" \+ "";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let anno = v + "@" + n;
-       let new_i = i + "mov w0, " + val + "\nstr w0, [x29, #-" + n + "]\n";
+       let new_i = i + "mov w0, " + val \+ "str w0, [x29, #-" + n + "]" \+ "";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
@@ -63,19 +63,19 @@ S ::= $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}" /[\s\S]*
 
 Stmt ::=
     "println" ";"
-    => "adrp x0, fmt_nl@PAGE\nadd x0, x0, fmt_nl@PAGEOFF\nbl _printf"
+    => "adrp x0, fmt_nl@PAGE" \+ "add x0, x0, fmt_nl@PAGEOFF" \+ "bl _printf"
   | "printsp" ";"
-    => "adrp x0, fmt_sp@PAGE\nadd x0, x0, fmt_sp@PAGEOFF\nbl _printf"
+    => "adrp x0, fmt_sp@PAGE" \+ "add x0, x0, fmt_sp@PAGEOFF" \+ "bl _printf"
   | "printn" /[^;]+/:val ";"
-    => RULE("Expr", val) + "\nstr x0, [sp]\nadrp x0, fmtn@PAGE\nadd x0, x0, fmtn@PAGEOFF\nbl _printf"
+    => RULE("Expr", val) \+ "str x0, [sp]" \+ "adrp x0, fmtn@PAGE" \+ "add x0, x0, fmtn@PAGEOFF" \+ "bl _printf"
   | "print" /[^;]+/:val ";"
-    => RULE("Expr", val) + "\nstr x0, [sp]\nadrp x0, fmt@PAGE\nadd x0, x0, fmt@PAGEOFF\nbl _printf"
+    => RULE("Expr", val) \+ "str x0, [sp]" \+ "adrp x0, fmt@PAGE" \+ "add x0, x0, fmt@PAGEOFF" \+ "bl _printf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => let val_asm = RULE("Expr", val);
-       ptr + "\nstr x0, [sp, #-16]!\n" + val_asm + "\nldr x1, [sp], #16\nstr w0, [x1]"
+       ptr \+ "str x0, [sp, #-16]!" \+ val_asm \+ "ldr x1, [sp], #16" \+ "str w0, [x1]"
   | $VAR:name "=" /[^;]+/:val ";"
     => let off = RULE("OffOf", name + "\x00" + val);
-       RULE("Expr", val) + "\nstr w0, [x29, #-" + off + "]"
+       RULE("Expr", val) \+ "str w0, [x29, #-" + off + "]"
   | "{" => ""
   | "}" => ""
   | /[\s]+/:ws => ""
@@ -92,29 +92,27 @@ WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest
 
 GenWhile ::= $NUM:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
     => ".L" + lc + ":\n"
-     + RULE("Expr", cond) + "\ncbz w0, .L" + (lc + "1") + "\n"
-     + RULE("Stmts", (lc + "2") + "\x00" + body) + "\n"
-     + "b .L" + lc + "\n.L" + (lc + "1") + ":\n"
+     + RULE("Expr", cond) \+ "cbz w0, .L" + (lc + "1") \+ RULE("Stmts", (lc + "2") + "\x00" + body) \+ "b .L" + lc \+ ".L" + (lc + "1") + ":\n"
 
 // ── Expression rules ─────────────────────────────────────────────────────
 
 Expr ::= /[\s\S]+/:s => RULE("Compare", s)
 
 Compare ::= $NO_COMP:l "<=" /[\s\S]+/:r
-    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\ncmp w1, w0\ncset w0, le"
+    => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "cmp w1, w0" \+ "cset w0, le"
   | $NO_COMP:l "<" /[\s\S]+/:r
-    => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\ncmp w1, w0\ncset w0, lt"
+    => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "cmp w1, w0" \+ "cset w0, lt"
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
 AddExpr ::= $NO_ADD:l "+" "0" => RULE("Expr", l)
           | "0" "+" $NO_ADD:r => RULE("Expr", r)
           | $NO_ADD:l "-" "0" => RULE("Expr", l)
-          | $NO_ADD:l "+" $NUM:r => RULE("Expr", l) + "\nadd w0, w0, #" + r
-          | $NO_ADD:l "-" $NUM:r => RULE("Expr", l) + "\nsub w0, w0, #" + r
-          | $NO_ADD:l "+" $VAR:r => RULE("Expr", r) + "\nmov w8, w0\n" + RULE("Expr", l) + "\nadd w0, w0, w8"
-          | $NO_ADD:l "-" $VAR:r => RULE("Expr", r) + "\nmov w8, w0\n" + RULE("Expr", l) + "\nsub w0, w0, w8"
-          | $NO_ADD:l "+" /[\s\S]+/:r => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nadd w0, w1, w0"
-  | $NO_ADD:l "-" /[\s\S]+/:r => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nsub w0, w1, w0"
+          | $NO_ADD:l "+" $NUM:r => RULE("Expr", l) \+ "add w0, w0, #" + r
+          | $NO_ADD:l "-" $NUM:r => RULE("Expr", l) \+ "sub w0, w0, #" + r
+          | $NO_ADD:l "+" $VAR:r => RULE("Expr", r) \+ "mov w8, w0" \+ RULE("Expr", l) \+ "add w0, w0, w8"
+          | $NO_ADD:l "-" $VAR:r => RULE("Expr", r) \+ "mov w8, w0" \+ RULE("Expr", l) \+ "sub w0, w0, w8"
+          | $NO_ADD:l "+" /[\s\S]+/:r => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "add w0, w1, w0"
+  | $NO_ADD:l "-" /[\s\S]+/:r => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "sub w0, w1, w0"
   | /[\s\S]+/:s => RULE("MulExpr", s)
 
 MulExpr ::= $NO_MUL:l "*" "0" => "mov w0, 0"
@@ -123,27 +121,27 @@ MulExpr ::= $NO_MUL:l "*" "0" => "mov w0, 0"
           | "1" "*" $NO_MUL:r => RULE("Expr", r)
           | $NO_MUL:l "/" "1" => RULE("Expr", l)
           | "0" "/" $NO_MUL:r => "mov w0, 0"
-          | $NO_MUL:l "*" "2" => RULE("Expr", l) + "\nadd w0, w0, w0"
+          | $NO_MUL:l "*" "2" => RULE("Expr", l) \+ "add w0, w0, w0"
 %for val, shift in [("4","2"), ("8","3")] {
-          | $NO_MUL:l "*" "{val}" => RULE("Expr", l) + "\nlsl w0, w0, {shift}"
+          | $NO_MUL:l "*" "{val}" => RULE("Expr", l) \+ "lsl w0, w0, {shift}"
 }
-          | $NO_MUL:l "*" $NUM:r => RULE("Expr", r) + "\nmov w8, w0\n" + RULE("Expr", l) + "\nmul w0, w0, w8"
-          | $NO_MUL:l "*" $VAR:r => RULE("Expr", r) + "\nmov w8, w0\n" + RULE("Expr", l) + "\nmul w0, w0, w8"
-          | $NO_MUL:l "/" $NUM:r => RULE("Expr", r) + "\nmov w8, w0\n" + RULE("Expr", l) + "\nsdiv w0, w0, w8"
-          | $NO_MUL:l "/" $VAR:r => RULE("Expr", r) + "\nmov w8, w0\n" + RULE("Expr", l) + "\nsdiv w0, w0, w8"
-          | $NO_MUL:l "/" /[\s\S]+/:r => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nsdiv w0, w1, w0"
-  | $NO_MUL:l "*" /[\s\S]+/:r => RULE("Expr", l) + "\nstr w0, [sp, #-16]!\n" + RULE("Expr", r) + "\nldr w1, [sp], #16\nmul w0, w1, w0"
+          | $NO_MUL:l "*" $NUM:r => RULE("Expr", r) \+ "mov w8, w0" \+ RULE("Expr", l) \+ "mul w0, w0, w8"
+          | $NO_MUL:l "*" $VAR:r => RULE("Expr", r) \+ "mov w8, w0" \+ RULE("Expr", l) \+ "mul w0, w0, w8"
+          | $NO_MUL:l "/" $NUM:r => RULE("Expr", r) \+ "mov w8, w0" \+ RULE("Expr", l) \+ "sdiv w0, w0, w8"
+          | $NO_MUL:l "/" $VAR:r => RULE("Expr", r) \+ "mov w8, w0" \+ RULE("Expr", l) \+ "sdiv w0, w0, w8"
+          | $NO_MUL:l "/" /[\s\S]+/:r => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "sdiv w0, w1, w0"
+  | $NO_MUL:l "*" /[\s\S]+/:r => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "mul w0, w1, w0"
   | /[\s\S]+/:s => RULE("Primary", s)
 
 Primary ::= "(" $PAREN:e ")" => RULE("Expr", e)
           | "&" $VAR:name => RULE("AddrOf", name)
-          | "*" PtrChain:inner => inner + "\nldr w0, [x0]"
+          | "*" PtrChain:inner => inner \+ "ldr w0, [x0]"
           | "0" => "mov w0, 0"
           | $NUM:n => "mov w0, " + n
           | $VAR:name => RULE("AnnotatedVar", name)
 
 PtrChain ::= $VAR:name => RULE("LoadQWord", name)
-           | "*" PtrChain:inner => inner + "\nldr x0, [x0]"
+           | "*" PtrChain:inner => inner \+ "ldr x0, [x0]"
 
 AnnotatedVar ::= /[^@]+/:name "@" $NUM:off => "ldr w0, [x29, #-" + off + "]"
                | $IDENT:name => "ldr w0, [x29, #-" + name + "]"
