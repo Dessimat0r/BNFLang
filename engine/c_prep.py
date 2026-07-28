@@ -3,9 +3,9 @@ import re
 
 def preprocess_sbnfc(src):
     """
-    Preprocess .sbnfc / .c source code into normalized statements for SBNF compilation.
+    Preprocess .c source code into normalized statements for SBNF compilation.
     - Strips #include directives
-    - Strips main() function wrappers if present (int main() { ... })
+    - Strips main() function wrappers (int main() { ... return 0; })
     - Normalizes printf(...) calls:
         printf("%d\n", val); -> print val;
         printf("%d ", val);  -> printn val;
@@ -25,19 +25,25 @@ def preprocess_sbnfc(src):
         if sline.startswith("#include"):
             continue
 
-        # 2. Strip main function declaration / outer braces if main() exists
+        # 2. Strip return statements in main
+        if sline.startswith("return"):
+            continue
+
+        # 3. Strip main function declaration / outer braces if main() exists
         if has_main:
             if re.match(r'^int\s+main\s*\([^)]*\)\s*\{?', sline):
                 in_main = True
-                if '{' in sline:
-                    brace_depth += sline.count('{') - sline.count('}')
+                brace_depth += sline.count('{') - sline.count('}')
                 continue
-            if in_main and sline == '}' and brace_depth == 1:
-                brace_depth -= 1
-                in_main = False
-                continue
+            if in_main:
+                if sline == '}' and brace_depth == 1:
+                    brace_depth = 0
+                    in_main = False
+                    continue
+                # Update brace depth for inner blocks
+                brace_depth += sline.count('{') - sline.count('}')
 
-        # 3. Normalize printf calls
+        # 4. Normalize printf calls
         m = re.match(r'^printf\s*\(\s*"%d\\n"\s*,\s*(.*?)\s*\)\s*;', sline)
         if m:
             out.append(f"print {m.group(1)};")
@@ -63,7 +69,7 @@ def preprocess_sbnfc(src):
             out.append(f"printn {m.group(1)};")
             continue
 
-        # 4. Normalize sprintf calls
+        # 5. Normalize sprintf calls
         m = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"%d"\s*,\s*(.*?)\s*\)\s*;', sline)
         if m:
             out.append(f"sprintf {m.group(1)} {m.group(2)};")
@@ -75,7 +81,7 @@ def preprocess_sbnfc(src):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python -m engine.c_prep <input.sbnfc> <output.c>")
+        print("Usage: python -m engine.c_prep <input.c> <output.c>")
         sys.exit(1)
 
     inp_path = sys.argv[1]

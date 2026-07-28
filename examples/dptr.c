@@ -1,7 +1,11 @@
+#include <stdio.h>
 
-int n = 5;
-int *p = &n;
-int **pp = &p;
-print **pp;
-**pp = 42;
-print n;
+int main() {
+    int n = 5;
+    int *p = &n;
+    int **pp = &p;
+    printf("%d\n", **pp);
+    **pp = 42;
+    printf("%d\n", n);
+    return 0;
+}
