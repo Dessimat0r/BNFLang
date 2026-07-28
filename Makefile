@@ -29,8 +29,8 @@ examples/pointer.s: examples/c-to-asm.sbnf examples/pointer.c
 examples/dptr.s: examples/c-to-asm.sbnf examples/dptr.c
 	python -m engine examples/c-to-asm.sbnf examples/dptr.c examples/dptr.s
 
-examples/sprintf.s: examples/c-to-asm.sbnf examples/sprintf.sbnfc
-	python -m engine examples/c-to-asm.sbnf examples/sprintf.sbnfc examples/sprintf.s
+examples/sprintf.s: examples/c-to-asm.sbnf examples/sprintf.c
+	python -m engine examples/c-to-asm.sbnf examples/sprintf.c examples/sprintf.s
 
 # Assemble .s → executable for x86-64
 examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf:
@@ -63,8 +63,8 @@ examples/pointer-arm64.s: examples/c-to-asm-arm64.sbnf examples/pointer.c
 examples/dptr-arm64.s: examples/c-to-asm-arm64.sbnf examples/dptr.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/dptr.c examples/dptr-arm64.s
 
-examples/sprintf-arm64.s: examples/c-to-asm-arm64.sbnf examples/sprintf.sbnfc
-	python -m engine examples/c-to-asm-arm64.sbnf examples/sprintf.sbnfc examples/sprintf-arm64.s
+examples/sprintf-arm64.s: examples/c-to-asm-arm64.sbnf examples/sprintf.c
+	python -m engine examples/c-to-asm-arm64.sbnf examples/sprintf.c examples/sprintf-arm64.s
 
 examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64:
 	clang -arch arm64 -c $(filter %.s,$^) -o $(@:.o=).o && \

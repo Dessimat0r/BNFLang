@@ -23,8 +23,8 @@ def main():
     with open(input_path) as f:
         input_text = f.read()
 
-    # Preprocess .sbnfc files
-    if input_path.endswith('.sbnfc'):
+    # Preprocess .sbnfc and .c files
+    if input_path.endswith('.sbnfc') or input_path.endswith('.c'):
         input_text = preprocess_sbnfc(input_text)
 
     # Escape null bytes so \x00 can be used as field separator

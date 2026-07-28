@@ -3,9 +3,9 @@ import re
 
 def preprocess_sbnfc(src):
     """
-    Preprocess .sbnfc C-like source code into normalized statements for SBNF compilation.
+    Preprocess .sbnfc / .c source code into normalized statements for SBNF compilation.
     - Strips #include directives
-    - Strips main() function wrappers (int main() { ... })
+    - Strips main() function wrappers if present (int main() { ... })
     - Normalizes printf(...) calls:
         printf("%d\n", val); -> print val;
         printf("%d ", val);  -> printn val;
@@ -13,8 +13,11 @@ def preprocess_sbnfc(src):
         printf(" ");         -> printsp;
     - Normalizes sprintf(buf, "%d", val); -> sprintf buf val;
     """
+    has_main = 'main' in src
     lines = src.split("\n")
     out = []
+    in_main = False
+    brace_depth = 0
 
     for line in lines:
         sline = line.strip()
@@ -22,12 +25,17 @@ def preprocess_sbnfc(src):
         if sline.startswith("#include"):
             continue
 
-        # 2. Strip main function declaration / outer braces
-        if re.match(r'^int\s+main\s*\([^)]*\)\s*\{?', sline):
-            continue
-        if sline == '}' and len(out) > 0 and not out[-1].endswith('}'):
-            # If line is just closing brace of main
-            continue
+        # 2. Strip main function declaration / outer braces if main() exists
+        if has_main:
+            if re.match(r'^int\s+main\s*\([^)]*\)\s*\{?', sline):
+                in_main = True
+                if '{' in sline:
+                    brace_depth += sline.count('{') - sline.count('}')
+                continue
+            if in_main and sline == '}' and brace_depth == 1:
+                brace_depth -= 1
+                in_main = False
+                continue
 
         # 3. Normalize printf calls
         m = re.match(r'^printf\s*\(\s*"%d\\n"\s*,\s*(.*?)\s*\)\s*;', sline)
