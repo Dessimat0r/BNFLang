@@ -2,41 +2,43 @@
 // Engine: PEG + LET RULE REPLACE.
 // Operators: + - * / < <=
 
+$IDENT = /[a-zA-Z_]\w*/
+
 Program ::= /[\s\S]*/:src
     => RULE("Decls", "4\x00\x00" + src)
 
 // ── Declaration phase ─────────────────────────────────────────────────────
 
-Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
+Decls ::= $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
-TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
+TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let ref_off = RULE("OffOfPtr", ref);
        let anno = v + "@" + n;
        let new_i = i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
+  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let ref_off = RULE("OffOfPtr", ref);
        let anno = v + "@" + n;
        let new_i = i + "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + n + "], rax\n";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c
+  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let anno = v + "@" + n;
        RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[0-9]+/:val ";" "\n" /[\s\S]*/:c
+  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" $NUM:val ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let anno = v + "@" + n;
        let new_i = i + "mov DWORD PTR [rbp-" + n + "], " + val + "\n";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
+  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => let new_n = n + "8";
        let anno = v + "@" + n;
        let new_i = i + "mov eax, " + val + "\nmov DWORD PTR [rbp-" + n + "], eax\n";
        RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
+  | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
      + ".text\n.globl _main\n.intel_syntax noprefix\n"
      + "_main:\npush rbp\nmov rbp, rsp\nsub rsp, " + n + "\n"
@@ -46,16 +48,16 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "
 
 // ── Statement phase ──────────────────────────────────────────────────────
 
-Stmts ::= /[0-9]+/:lc "\x00" /[\s\S]*/:code
+Stmts ::= $NUM:lc "\x00" /[\s\S]*/:code
     => RULE("S", lc + "\x00" + code)
 
-S ::= /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*/:cond ")" "{" WhileBody:body "}" /[\s\S]*/:rest
+S ::= $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}" /[\s\S]*/:rest
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "2") + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*/:cond ")" "{" WhileBody:body "}"
+  | $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}"
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
-  | /[0-9]+/:lc "\x00" Stmt:first "\n" /[\s\S]*/:rest
+  | $NUM:lc "\x00" Stmt:first "\n" /[\s\S]*/:rest
     => first + "\n" + RULE("S", lc + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" Stmt:last
+  | $NUM:lc "\x00" Stmt:last
     => last + "\n"
   | => ""
 
@@ -71,7 +73,7 @@ Stmt ::=
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => let val_asm = RULE("Expr", val);
        ptr + "\npush rax\n" + val_asm + "\npop rcx\nmov DWORD PTR [rcx], eax"
-  | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";"
+  | $VAR:name "=" /[^;]+/:val ";"
     => let off = RULE("OffOf", name + "\x00" + val);
        RULE("Expr", val) + "\nmov DWORD PTR [rbp-" + off + "], eax"
   | "{" => ""
@@ -79,8 +81,8 @@ Stmt ::=
   | /[\s]+/:ws => ""
   | /./:c => c
 
-OffOf ::= /[^@]+/:name "@" /[0-9]+/:off "\x00" /[\s\S]*/:rest => off
-        | /[a-zA-Z_]\w*/:name "\x00" /[\s\S]*/:rest => name
+OffOf ::= /[^@]+/:name "@" $NUM:off "\x00" /[\s\S]*/:rest => off
+        | $IDENT:name "\x00" /[\s\S]*/:rest => name
 
 // ── While loop ───────────────────────────────────────────────────────────
 
@@ -88,7 +90,7 @@ WhileBody ::= /[^{}]+/:text WhileBody:rest => text + rest
             | "{" WhileBody:inner "}" WhileBody:rest => "{" + inner + "}" + rest
             | => ""
 
-GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
+GenWhile ::= $NUM:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
     => ".L" + lc + ":\n"
      + RULE("Expr", cond) + "\ntest eax, eax\nje .L" + (lc + "1") + "\n"
      + RULE("Stmts", (lc + "2") + "\x00" + body) + "\n"
@@ -98,92 +100,66 @@ GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
 
 Expr ::= /[\s\S]+/:s => RULE("Compare", s)
 
-Compare ::= /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[0-9]+/:r
-    => RULE("Expr", l) + "\ncmp eax, " + r + "\nsetle al\nmovzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[0-9]+/:r
-    => RULE("Expr", l) + "\ncmp eax, " + r + "\nsetl al\nmovzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[a-zA-Z_@0-9]+/:r
-    => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\ncmp ecx, eax\nsetle al\nmovzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[a-zA-Z_@0-9]+/:r
-    => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\ncmp ecx, eax\nsetl al\nmovzx eax, al"
-  | /[a-zA-Z_@0-9]+/:l "<=" /[\s\S]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncmp eax, ecx\nsetle al\nmovzx eax, al"
-  | /[a-zA-Z_@0-9]+/:l "<" /[\s\S]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncmp eax, ecx\nsetl al\nmovzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetle al\nmovzx eax, al"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetl al\nmovzx eax, al"
+Compare ::= $NO_COMP:l "<=" $NUM:r => RULE("Expr", l) + "\ncmp eax, " + r + "\nsetle al\nmovzx eax, al"
+  | $NO_COMP:l "<" $NUM:r   => RULE("Expr", l) + "\ncmp eax, " + r + "\nsetl al\nmovzx eax, al"
+  | $NO_COMP:l "<=" $VAR:r  => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\ncmp ecx, eax\nsetle al\nmovzx eax, al"
+  | $NO_COMP:l "<" $VAR:r   => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\ncmp ecx, eax\nsetl al\nmovzx eax, al"
+  | $VAR:l "<=" /[\s\S]+/:r  => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncmp eax, ecx\nsetle al\nmovzx eax, al"
+  | $VAR:l "<" /[\s\S]+/:r   => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncmp eax, ecx\nsetl al\nmovzx eax, al"
+  | $NO_COMP:l "<=" /[\s\S]+/:r => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetle al\nmovzx eax, al"
+  | $NO_COMP:l "<" /[\s\S]+/:r  => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\ncmp ecx, eax\nsetl al\nmovzx eax, al"
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
-AddExpr ::= /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "+" "0" => RULE("Expr", l)
-          | "0" "+" /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:r => RULE("Expr", r)
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "-" "0" => RULE("Expr", l)
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "+" "1" => RULE("Expr", l) + "\ninc eax"
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "-" "1" => RULE("Expr", l) + "\ndec eax"
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "+" /[0-9]+/:r
-    => RULE("Expr", l) + "\nlea eax, [eax + " + r + "]"
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "-" /[0-9]+/:r
-    => RULE("Expr", l) + "\nlea eax, [eax - " + r + "]"
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "+" /[a-zA-Z_@0-9]+/:r
-    => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\nadd eax, ecx"
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "-" /[a-zA-Z_@0-9]+/:r
-    => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\nsub ecx, eax\nmov eax, ecx"
-          | /[a-zA-Z_@0-9]+/:l "+" /[\s\S]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nadd eax, ecx"
-          | /[a-zA-Z_@0-9]+/:l "-" /[\s\S]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nsub eax, ecx"
-          | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "+" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nadd eax, ecx"
-  | /(?:[^+(\-]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "-" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\nsub eax, ecx"
+AddExpr ::= $NO_ADD:l "+" "0" => RULE("Expr", l)
+          | "0" "+" $NO_ADD:r => RULE("Expr", r)
+          | $NO_ADD:l "-" "0" => RULE("Expr", l)
+          | $NO_ADD:l "+" "1" => RULE("Expr", l) + "\ninc eax"
+          | $NO_ADD:l "-" "1" => RULE("Expr", l) + "\ndec eax"
+          | $NO_ADD:l "+" $NUM:r => RULE("Expr", l) + "\nlea eax, [eax + " + r + "]"
+          | $NO_ADD:l "-" $NUM:r => RULE("Expr", l) + "\nlea eax, [eax - " + r + "]"
+          | $NO_ADD:l "+" $VAR:r => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\nadd eax, ecx"
+          | $NO_ADD:l "-" $VAR:r => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\nsub ecx, eax\nmov eax, ecx"
+          | $VAR:l "+" /[\s\S]+/:r => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nadd eax, ecx"
+          | $VAR:l "-" /[\s\S]+/:r => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nsub eax, ecx"
+          | $NO_ADD:l "+" /[\s\S]+/:r => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nadd eax, ecx"
+  | $NO_ADD:l "-" /[\s\S]+/:r => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\nsub eax, ecx"
   | /[\s\S]+/:s => RULE("MulExpr", s)
 
-MulExpr ::= /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "0" => "xor eax, eax"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "1" => RULE("Expr", l)
-          | "0" "*" /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:r => "xor eax, eax"
-          | "1" "*" /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:r => RULE("Expr", r)
-          | /(?:[^/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "/" "1" => RULE("Expr", l)
-          | "0" "/" /(?:[^/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:r => "xor eax, eax"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "2" => RULE("Expr", l) + "\nadd eax, eax"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "4" => RULE("Expr", l) + "\nshl eax, 2"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "8" => RULE("Expr", l) + "\nshl eax, 3"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "16" => RULE("Expr", l) + "\nshl eax, 4"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "32" => RULE("Expr", l) + "\nshl eax, 5"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" "64" => RULE("Expr", l) + "\nshl eax, 6"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" /[0-9]+/:r
-    => RULE("Expr", l) + "\nimul eax, eax, " + r
-          | /(?:[^/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "/" /[0-9]+/:r
-    => RULE("Expr", l) + "\nmov ecx, " + r + "\ncdq\nidiv ecx"
-          | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" /[a-zA-Z_@0-9]+/:r
-    => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\nimul eax, ecx"
-          | /(?:[^/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "/" /[a-zA-Z_@0-9]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
-          | /[a-zA-Z_@0-9]+/:l "*" /[\s\S]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nimul eax, ecx"
-          | /[a-zA-Z_@0-9]+/:l "/" /[\s\S]+/:r
-    => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncdq\nidiv ecx"
-          | /(?:[^/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "/" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
-  | /(?:[^*/(]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "*" /[\s\S]+/:r
-    => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nimul eax, ecx"
+MulExpr ::= $NO_MUL:l "*" "0" => "xor eax, eax"
+          | $NO_MUL:l "*" "1" => RULE("Expr", l)
+          | "0" "*" $NO_MUL:r => "xor eax, eax"
+          | "1" "*" $NO_MUL:r => RULE("Expr", r)
+          | $NO_MUL:l "/" "1" => RULE("Expr", l)
+          | "0" "/" $NO_MUL:r => "xor eax, eax"
+          | $NO_MUL:l "*" "2" => RULE("Expr", l) + "\nadd eax, eax"
+%for val, shift in [("4","2"), ("8","3"), ("16","4"), ("32","5"), ("64","6")] {
+          | $NO_MUL:l "*" "{val}" => RULE("Expr", l) + "\nshl eax, {shift}"
+}
+          | $NO_MUL:l "*" $NUM:r => RULE("Expr", l) + "\nimul eax, eax, " + r
+          | $NO_MUL:l "/" $NUM:r => RULE("Expr", l) + "\nmov ecx, " + r + "\ncdq\nidiv ecx"
+          | $NO_MUL:l "*" $VAR:r => RULE("Expr", l) + "\nmov ecx, eax\n" + RULE("Expr", r) + "\nimul eax, ecx"
+          | $NO_MUL:l "/" $VAR:r => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
+          | $VAR:l "*" /[\s\S]+/:r => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\nimul eax, ecx"
+          | $VAR:l "/" /[\s\S]+/:r => RULE("Expr", r) + "\nmov ecx, eax\n" + RULE("Expr", l) + "\ncdq\nidiv ecx"
+          | $NO_MUL:l "/" /[\s\S]+/:r => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\nmov ecx, eax\npop rax\ncdq\nidiv ecx"
+  | $NO_MUL:l "*" /[\s\S]+/:r => RULE("Expr", l) + "\npush rax\n" + RULE("Expr", r) + "\npop rcx\nimul eax, ecx"
   | /[\s\S]+/:s => RULE("Primary", s)
 
-Primary ::= "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))*/:e ")" => RULE("Expr", e)
-          | "&" /[a-zA-Z_@0-9]+/:name => RULE("AddrOf", name)
+Primary ::= "(" $PAREN:e ")" => RULE("Expr", e)
+          | "&" $VAR:name => RULE("AddrOf", name)
           | "*" PtrChain:inner => inner + "\nmov eax, [rax]"
           | "0" => "xor eax, eax"
-          | /[0-9]+/:n => "mov eax, " + n
-          | /[a-zA-Z_@0-9]+/:name => RULE("AnnotatedVar", name)
+          | $NUM:n => "mov eax, " + n
+          | $VAR:name => RULE("AnnotatedVar", name)
 
-PtrChain ::= /[a-zA-Z_@0-9]+/:name => RULE("LoadQWord", name)
+PtrChain ::= $VAR:name => RULE("LoadQWord", name)
            | "*" PtrChain:inner => inner + "\nmov rax, [rax]"
 
-AnnotatedVar ::= /[^@]+/:name "@" /[0-9]+/:off => "mov eax, DWORD PTR [rbp-" + off + "]"
-               | /[a-zA-Z_]\w*/:name => "mov eax, DWORD PTR [rbp-" + name + "]"
+AnnotatedVar ::= /[^@]+/:name "@" $NUM:off => "mov eax, DWORD PTR [rbp-" + off + "]"
+               | $IDENT:name => "mov eax, DWORD PTR [rbp-" + name + "]"
 
-LoadQWord ::= /[^@]+/:name "@" /[0-9]+/:off => "mov rax, QWORD PTR [rbp-" + off + "]"
-            | /[a-zA-Z_]\w*/:name => "mov rax, QWORD PTR [rbp-" + name + "]"
+LoadQWord ::= /[^@]+/:name "@" $NUM:off => "mov rax, QWORD PTR [rbp-" + off + "]"
+            | $IDENT:name => "mov rax, QWORD PTR [rbp-" + name + "]"
 
-AddrOf ::= /[^@]+/:name "@" /[0-9]+/:off => "lea rax, [rbp-" + off + "]"
-OffOfPtr ::= /[^@]+/:name "@" /[0-9]+/:off => off
+AddrOf ::= /[^@]+/:name "@" $NUM:off => "lea rax, [rbp-" + off + "]"
+OffOfPtr ::= /[^@]+/:name "@" $NUM:off => off
