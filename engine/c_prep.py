@@ -10,6 +10,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
     - Resolves #include <header.h> from include/ directory
     - Resolves typedef statements
     - Desugars struct declarations and member access (s.field -> s_field)
+    - Desugars buffer/array declarations (char buf[64] -> int buf = 0)
     - Hoists mixed declarations to top of block for C99 compliance
     - Strips main() function wrappers (int main() { ... return 0; })
     - Normalizes printf(...) and sprintf(...)
@@ -65,6 +66,12 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         # Apply typedef replacements
         for alias, base in typedefs.items():
             sline = re.sub(rf'\b{alias}\b', base, sline)
+
+        # Desugar buffer / array declarations: char buf[64]; -> int buf = 0;
+        arr_m = re.match(r'^(?:char|int|short|long|int\d+_t)\s+([a-zA-Z_]\w*)\[\d+\]\s*;', sline)
+        if arr_m:
+            arr_var = arr_m.group(1)
+            sline = f"int {arr_var} = 0;"
 
         # 3. Handle struct definitions: struct Point { int x; int y; };
         st_def_m = re.match(r'^struct\s+([a-zA-Z_]\w*)\s*\{', sline)
@@ -162,12 +169,10 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
 
     for l in raw_lines:
         if type_pattern.match(l.strip()):
-            # If it's a declaration with expression, split into decl + assignment if complex
             decl_m = re.match(r'^((?:long\s+long|char|short|int|long|void)\s+\*?\s*[a-zA-Z_]\w*)\s*=\s*(.+);$', l.strip())
             if decl_m:
                 var_decl = decl_m.group(1)
                 expr_val = decl_m.group(2)
-                # If expression is literal int, keep inline; else hoist assignment
                 if re.match(r'^\d+$', expr_val) or expr_val.startswith('&'):
                     decls.append(l)
                 else:
