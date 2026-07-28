@@ -10,7 +10,7 @@ from engine.c_prep import preprocess_sbnfc
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python -m engine <grammar.sbnf> <input> [output]")
+        print("Usage: python -m engine <grammar.sbnf> <input.c> [output.s]")
         sys.exit(1)
 
     grammar_path = sys.argv[1]
@@ -23,8 +23,8 @@ def main():
     with open(input_path) as f:
         input_text = f.read()
 
-    # Preprocess .sbnfc and .c files
-    if input_path.endswith('.sbnfc') or input_path.endswith('.c'):
+    # Preprocess C source files (.c)
+    if input_path.endswith('.c') or input_path.endswith('.sbnfc'):
         input_text = preprocess_sbnfc(input_text)
 
     # Escape null bytes so \x00 can be used as field separator
