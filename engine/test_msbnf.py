@@ -1,5 +1,5 @@
 import unittest
-from engine.msbnf import compile_msbnf, transform_let_block, expand_for_loops, expand_aliases, desugar_newline_concat, BUILTIN_ALIASES
+from engine.msbnf import compile_msbnf, transform_let_block, expand_for_loops, expand_aliases, desugar_newline_concat, desugar_decl_helpers, BUILTIN_ALIASES
 
 class TestMSBNF(unittest.TestCase):
     def test_single_let_desugar(self):
@@ -11,6 +11,13 @@ class TestMSBNF(unittest.TestCase):
         input_text = 'let ref_off = OffOfPtr(ref);\nlet anno = v + "@" + n;\n"lea rax, [rbp-" + ref_off + "]"'
         expected = 'LET(ref_off, OffOfPtr(ref), LET(anno, v + "@" + n, "lea rax, [rbp-" + ref_off + "]"))'
         self.assertEqual(transform_let_block(input_text), expected)
+
+    def test_decl_helper_desugar(self):
+        input_text = 'DECL(v, n, i, c, "mov DWORD PTR [rbp-" + n + "], 0\\n")'
+        desugared = desugar_decl_helpers(input_text)
+        self.assertIn('LET(new_n, n + "8"', desugared)
+        self.assertIn('LET(anno, v + "@" + n', desugared)
+        self.assertIn('RULE("Decls"', desugared)
 
     def test_alias_expansion(self):
         input_text = 'MulExpr ::= $NO_MUL:l "*" $NUM:n => RULE("Expr", l)'

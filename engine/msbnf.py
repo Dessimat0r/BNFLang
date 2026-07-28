@@ -22,16 +22,46 @@ def compile_msbnf(text):
     # 2. Expand %for loops
     text = expand_for_loops(text)
 
-    # 3. Desugar \+ (newline-concat operator)
+    # 3. Desugar DECL(v, n, i, c, code) helpers
+    text = desugar_decl_helpers(text)
+
+    # 4. Desugar \+ (newline-concat operator)
     text = desugar_newline_concat(text)
 
-    # 4. Expand pattern aliases ($NO_MUL:label -> regex:label)
+    # 5. Expand pattern aliases ($NO_MUL:label -> regex:label)
     text = expand_aliases(text, aliases)
 
-    # 5. Desugar sequential let statements in action expressions
+    # 6. Desugar sequential let statements in action expressions
     text = desugar_let_actions(text)
 
     return text.strip() + "\n"
+
+def desugar_decl_helpers(text):
+    """
+    Desugar DECL(v, n, i, c, code) into standard declaration state-threading calls.
+    DECL(v, n, i, c, code) =>
+    LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + code, RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+    """
+    lines = text.split("\n")
+    out_lines = []
+    for line in lines:
+        if "DECL(" in line:
+            m = re.search(r'DECL\s*\(\s*([a-zA-Z_]\w*)\s*,\s*([a-zA-Z_]\w*)\s*,\s*([a-zA-Z_]\w*)\s*,\s*([a-zA-Z_]\w*)\s*,\s*(.*)\)\s*$', line)
+            if m:
+                v, n, i, c, code = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+                # Strip trailing parens matching DECL
+                prefix = line[:m.start()]
+                expanded = (
+                    f'LET(new_n, {n} + "8", '
+                    f'LET(anno, {v} + "@" + {n}, '
+                    f'LET(new_i, {i} + {code}, '
+                    f'RULE("Decls", new_n + "\\x00" + new_i + "\\x00" + REPLACE({v}, anno, {c})))))'
+                )
+                out_lines.append(prefix + expanded)
+                continue
+        out_lines.append(line)
+
+    return "\n".join(out_lines)
 
 def desugar_newline_concat(text):
     """Replace `\\+` with `+ "\\n" +` in action expressions."""

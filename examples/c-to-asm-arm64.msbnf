@@ -12,32 +12,14 @@ Program ::= /[\s\S]*/:src
 Decls ::= $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
-TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
-    => let new_n = n + "8";
-       let ref_off = RULE("OffOfPtr", ref);
-       let anno = v + "@" + n;
-       let new_i = i + "sub x16, x29, #" + ref_off \+ "str x16, [x29, #-" + n + "]" \+ "";
-       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
-  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
-    => let new_n = n + "8";
-       let ref_off = RULE("OffOfPtr", ref);
-       let anno = v + "@" + n;
-       let new_i = i + "sub x16, x29, #" + ref_off \+ "str x16, [x29, #-" + n + "]" \+ "";
-       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
-  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " "*" $IDENT:v ";" "\n" /[\s\S]*/:c
-    => let new_n = n + "8";
-       let anno = v + "@" + n;
-       RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))
+TryDecl ::= $NUM:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
+    => DECL(v, n, i, c, "sub x16, x29, #" + RULE("OffOfPtr", ref) \+ "str x16, [x29, #-" + n + "]" \+ "")
+  | $NUM:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ $IDENT:v ";" "\n" /[\s\S]*/:c
+    => DECL(v, n, i, c, "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" "0" ";" "\n" /[\s\S]*/:c
-    => let new_n = n + "8";
-       let anno = v + "@" + n;
-       let new_i = i + "str wzr, [x29, #-" + n + "]" \+ "";
-       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
+    => DECL(v, n, i, c, "str wzr, [x29, #-" + n + "]" \+ "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00int " $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
-    => let new_n = n + "8";
-       let anno = v + "@" + n;
-       let new_i = i + "mov w0, " + val \+ "str w0, [x29, #-" + n + "]" \+ "";
-       RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))
+    => DECL(v, n, i, c, "mov w0, " + val \+ "str w0, [x29, #-" + n + "]" \+ "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
      + ".text\n.globl _main\n"
@@ -98,10 +80,10 @@ GenWhile ::= $NUM:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
 
 Expr ::= /[\s\S]+/:s => RULE("Compare", s)
 
-Compare ::= $NO_COMP:l "<=" /[\s\S]+/:r
-    => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "cmp w1, w0" \+ "cset w0, le"
-  | $NO_COMP:l "<" /[\s\S]+/:r
-    => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "cmp w1, w0" \+ "cset w0, lt"
+%for op, cond in [("<=", "le"), ("<", "lt")] {
+Compare ::= $NO_COMP:l "{op}" /[\s\S]+/:r
+    => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ "cmp w1, w0" \+ "cset w0, {cond}"
+}
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
 AddExpr ::= $NO_ADD:l "+" "0" => RULE("Expr", l)

@@ -11,12 +11,10 @@ Program ::= /[\s\S]*/:src
 Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
     => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
-TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(ref_off, RULE("OffOfPtr", ref), LET(anno, v + "@" + n, LET(new_i, i + "sub x16, x29, #" + ref_off + "\n" + "str x16, [x29, #-" + n + "]" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" "*" /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(ref_off, RULE("OffOfPtr", ref), LET(anno, v + "@" + n, LET(new_i, i + "sub x16, x29, #" + ref_off + "\n" + "str x16, [x29, #-" + n + "]" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
-  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " "*" /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c
-    => LET(new_n, n + "8", LET(anno, v + "@" + n, RULE("Decls", new_n + "\x00" + i + "\x00" + REPLACE(v, anno, c))))
+TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ /[a-zA-Z_]\w*/:v "=" "&" /[a-zA-Z_@0-9]+/:ref ";" "\n" /[\s\S]*/:c
+    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "sub x16, x29, #" + RULE("OffOfPtr", ref) + "\n" + "str x16, [x29, #-" + n + "]" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
+  | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /\*+/ /[a-zA-Z_]\w*/:v ";" "\n" /[\s\S]*/:c
+    => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" "0" ";" "\n" /[\s\S]*/:c
     => LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + "str wzr, [x29, #-" + n + "]" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c)))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00int " /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
@@ -79,9 +77,11 @@ GenWhile ::= /[0-9]+/:lc "\x00" /[^\x00]+/:cond "\x00" /[\s\S]*/:body
 
 Expr ::= /[\s\S]+/:s => RULE("Compare", s)
 
+
 Compare ::= /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<=" /[\s\S]+/:r
     => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, le"
-  | /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[\s\S]+/:r
+
+Compare ::= /(?:[^<]+|\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))+/:l "<" /[\s\S]+/:r
     => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, lt"
   | /[\s\S]+/:s => RULE("AddExpr", s)
 
