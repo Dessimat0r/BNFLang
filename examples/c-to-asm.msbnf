@@ -18,7 +18,7 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
   | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => let val_asm = RULE("Expr", val); DECL(v, n, i, c, val_asm \+ "mov DWORD PTR [rbp-" + n + "], eax" \+ "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
-    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
+    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n"
      + ".text\n.globl _main\n.intel_syntax noprefix\n"
      + "_main:\npush rbp\nmov rbp, rsp\nsub rsp, " + n + "\n"
      + i
@@ -37,15 +37,22 @@ S ::= $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}" /[\s\S]*
   | => ""
 
 Stmt ::=
+    "print3" $VAR:v1 $VAR:v2 $VAR:v3 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "mov esi, eax" \+ a2 \+ "mov edx, eax" \+ a3 \+ "mov ecx, eax" \+ "lea rdi, [rip + fmt_3d]" \+ "xor eax, eax" \+ "call _printf"
+  | "print2" $VAR:v1 $VAR:v2 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); a1 \+ "mov esi, eax" \+ a2 \+ "mov edx, eax" \+ "lea rdi, [rip + fmt_2d]" \+ "xor eax, eax" \+ "call _printf"
+  | "sprintf3" $VAR:buf $VAR:v1 $VAR:v2 $VAR:v3 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); let buf_off = RULE("OffOf", buf + "\x00" + v1); "lea rdi, [rbp-" + buf_off + "]" \+ "lea rsi, [rip + fmt_3d]" \+ a1 \+ "mov edx, eax" \+ a2 \+ "mov ecx, eax" \+ a3 \+ "mov r8d, eax" \+ "xor eax, eax" \+ "call _sprintf"
+  | "sprintf2" $VAR:buf $VAR:v1 $VAR:v2 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let buf_off = RULE("OffOf", buf + "\x00" + v1); "lea rdi, [rbp-" + buf_off + "]" \+ "lea rsi, [rip + fmt_2d]" \+ a1 \+ "mov edx, eax" \+ a2 \+ "mov ecx, eax" \+ "xor eax, eax" \+ "call _sprintf"
+  | "sprintf" $VAR:buf $VAR:val ";"
+    => let val_asm = RULE("Expr", val); let buf_off = RULE("OffOf", buf + "\x00" + val); "lea rdi, [rbp-" + buf_off + "]" \+ "lea rsi, [rip + fmt]" \+ val_asm \+ "mov edx, eax" \+ "xor eax, eax" \+ "call _sprintf"
 %for kw, fmt in [("println", "fmt_nl"), ("printsp", "fmt_sp")] {
-    "{kw}" ";" => "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf" |
+  | "{kw}" ";" => "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf"
 }
 %for kw, fmt in [("printn", "fmtn"), ("print", "fmt")] {
-    "{kw}" /[^;]+/:val ";" => RULE("Expr", val) \+ "mov esi, eax" \+ "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf" |
+  | "{kw}" /[^;]+/:val ";" => RULE("Expr", val) \+ "mov esi, eax" \+ "lea rdi, [rip + {fmt}]" \+ "xor eax, eax" \+ "call _printf"
 }
-    "sprintf" $VAR:buf /[^;]+/:val ";"
-    => let val_asm = RULE("Expr", val); let buf_off = RULE("OffOf", buf + "\x00" + val);
-       "lea rdi, [rbp-" + buf_off + "]" \+ "lea rsi, [rip + fmt]" \+ val_asm \+ "mov edx, eax" \+ "xor eax, eax" \+ "call _sprintf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => let val_asm = RULE("Expr", val); ptr \+ "push rax" \+ val_asm \+ "pop rcx" \+ "mov DWORD PTR [rcx], eax"
   | $VAR:name "=" /[^;]+/:val ";" => let off = RULE("OffOf", name + "\x00" + val); RULE("Expr", val) \+ "mov DWORD PTR [rbp-" + off + "], eax"

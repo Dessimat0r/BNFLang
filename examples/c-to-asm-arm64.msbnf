@@ -18,7 +18,7 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
   | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => let val_asm = RULE("Expr", val); DECL(v, n, i, c, val_asm \+ "str w0, [x29, #-" + n + "]" \+ "")
   | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
-    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
+    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n"
      + ".text\n.globl _main\n"
      + "_main:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + RULE("Ceil16", n) + "\n"
      + i
@@ -37,15 +37,22 @@ S ::= $NUM:lc "\x00" "while" "(" $PAREN:cond ")" "{" WhileBody:body "}" /[\s\S]*
   | => ""
 
 Stmt ::=
+    "print3" $VAR:v1 $VAR:v2 $VAR:v3 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ a3 \+ "str x0, [sp, #16]" \+ "adrp x0, fmt_3d@PAGE" \+ "add x0, x0, fmt_3d@PAGEOFF" \+ "bl _printf"
+  | "print2" $VAR:v1 $VAR:v2 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ "adrp x0, fmt_2d@PAGE" \+ "add x0, x0, fmt_2d@PAGEOFF" \+ "bl _printf"
+  | "sprintf3" $VAR:buf $VAR:v1 $VAR:v2 $VAR:v3 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); let buf_off = RULE("OffOf", buf + "\x00" + v1); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ a3 \+ "str x0, [sp, #16]" \+ "sub x0, x29, #" + buf_off \+ "adrp x1, fmt_3d@PAGE" \+ "add x1, x1, fmt_3d@PAGEOFF" \+ "bl _sprintf"
+  | "sprintf2" $VAR:buf $VAR:v1 $VAR:v2 ";"
+    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let buf_off = RULE("OffOf", buf + "\x00" + v1); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ "sub x0, x29, #" + buf_off \+ "adrp x1, fmt_2d@PAGE" \+ "add x1, x1, fmt_2d@PAGEOFF" \+ "bl _sprintf"
+  | "sprintf" $VAR:buf $VAR:val ";"
+    => let val_asm = RULE("Expr", val); let buf_off = RULE("OffOf", buf + "\x00" + val); val_asm \+ "str x0, [sp]" \+ "sub x0, x29, #" + buf_off \+ "adrp x1, fmt@PAGE" \+ "add x1, x1, fmt@PAGEOFF" \+ "bl _sprintf"
 %for kw, fmt in [("println", "fmt_nl"), ("printsp", "fmt_sp")] {
-    "{kw}" ";" => "adrp x0, {fmt}@PAGE" \+ "add x0, x0, {fmt}@PAGEOFF" \+ "bl _printf" |
+  | "{kw}" ";" => "adrp x0, {fmt}@PAGE" \+ "add x0, x0, {fmt}@PAGEOFF" \+ "bl _printf"
 }
 %for kw, fmt in [("printn", "fmtn"), ("print", "fmt")] {
-    "{kw}" /[^;]+/:val ";" => RULE("Expr", val) \+ "str x0, [sp]" \+ "adrp x0, {fmt}@PAGE" \+ "add x0, x0, {fmt}@PAGEOFF" \+ "bl _printf" |
+  | "{kw}" /[^;]+/:val ";" => RULE("Expr", val) \+ "str x0, [sp]" \+ "adrp x0, {fmt}@PAGE" \+ "add x0, x0, {fmt}@PAGEOFF" \+ "bl _printf"
 }
-    "sprintf" $VAR:buf /[^;]+/:val ";"
-    => let val_asm = RULE("Expr", val); let buf_off = RULE("OffOf", buf + "\x00" + val);
-       val_asm \+ "str x0, [sp]" \+ "sub x0, x29, #" + buf_off \+ "adrp x1, fmt@PAGE" \+ "add x1, x1, fmt@PAGEOFF" \+ "bl _sprintf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => let val_asm = RULE("Expr", val); ptr \+ "str x0, [sp, #-16]!" \+ val_asm \+ "ldr x1, [sp], #16" \+ "str w0, [x1]"
   | $VAR:name "=" /[^;]+/:val ";" => let off = RULE("OffOf", name + "\x00" + val); RULE("Expr", val) \+ "str w0, [x29, #-" + off + "]"
@@ -108,7 +115,7 @@ LoadQWord    ::= $VAR_OFF => "ldr x0, [x29, #-" + off + "]" | $IDENT:name => "ld
 AddrOf       ::= $VAR_OFF => "sub x0, x29, #" + off
 
 Ceil16 ::=
-%for k, c in [("64","64"),("60","64"),("56","64"),("52","64"),("48","48"),("44","48"),("40","48"),("36","48"),("32","32"),("28","32"),("24","32"),("20","32"),("16","16"),("12","16"),("8","16"),("4","16")] {
-    "{k}" => "{c}" |
+%for k in range(4, 257, 4) {
+    "{k}" => "{((k + 15) // 16) * 16}" |
 }
     "0" => "0" | $NUM:n => n

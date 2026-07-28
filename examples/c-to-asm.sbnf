@@ -16,7 +16,7 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/ /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => LET(val_asm, RULE("Expr", val), LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + val_asm + "\n" + "mov DWORD PTR [rbp-" + n + "], eax" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
-    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
+    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n"
      + ".text\n.globl _main\n.intel_syntax noprefix\n"
      + "_main:\npush rbp\nmov rbp, rsp\nsub rsp, " + n + "\n"
      + i
@@ -35,16 +35,24 @@ S ::= /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*
   | => ""
 
 Stmt ::=
-
-    "println" ";" => "lea rdi, [rip + fmt_nl]" + "\n" + "xor eax, eax" + "\n" + "call _printf" |
-
-    "printsp" ";" => "lea rdi, [rip + fmt_sp]" + "\n" + "xor eax, eax" + "\n" + "call _printf" |
-
-    "printn" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "mov esi, eax" + "\n" + "lea rdi, [rip + fmtn]" + "\n" + "xor eax, eax" + "\n" + "call _printf" |
-
-    "print" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "mov esi, eax" + "\n" + "lea rdi, [rip + fmt]" + "\n" + "xor eax, eax" + "\n" + "call _printf" |
-    "sprintf" /[a-zA-Z_@0-9]+/:buf /[^;]+/:val ";"
+    "print3" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 /[a-zA-Z_@0-9]+/:v3 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "mov esi, eax" + "\n" + a2 + "\n" + "mov edx, eax" + "\n" + a3 + "\n" + "mov ecx, eax" + "\n" + "lea rdi, [rip + fmt_3d]" + "\n" + "xor eax, eax" + "\n" + "call _printf")))
+  | "print2" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "mov esi, eax" + "\n" + a2 + "\n" + "mov edx, eax" + "\n" + "lea rdi, [rip + fmt_2d]" + "\n" + "xor eax, eax" + "\n" + "call _printf"))
+  | "sprintf3" /[a-zA-Z_@0-9]+/:buf /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 /[a-zA-Z_@0-9]+/:v3 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), LET(buf_off, RULE("OffOf", buf + "\x00" + v1), "lea rdi, [rbp-" + buf_off + "]" + "\n" + "lea rsi, [rip + fmt_3d]" + "\n" + a1 + "\n" + "mov edx, eax" + "\n" + a2 + "\n" + "mov ecx, eax" + "\n" + a3 + "\n" + "mov r8d, eax" + "\n" + "xor eax, eax" + "\n" + "call _sprintf"))))
+  | "sprintf2" /[a-zA-Z_@0-9]+/:buf /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(buf_off, RULE("OffOf", buf + "\x00" + v1), "lea rdi, [rbp-" + buf_off + "]" + "\n" + "lea rsi, [rip + fmt_2d]" + "\n" + a1 + "\n" + "mov edx, eax" + "\n" + a2 + "\n" + "mov ecx, eax" + "\n" + "xor eax, eax" + "\n" + "call _sprintf")))
+  | "sprintf" /[a-zA-Z_@0-9]+/:buf /[a-zA-Z_@0-9]+/:val ";"
     => LET(val_asm, RULE("Expr", val), LET(buf_off, RULE("OffOf", buf + "\x00" + val), "lea rdi, [rbp-" + buf_off + "]" + "\n" + "lea rsi, [rip + fmt]" + "\n" + val_asm + "\n" + "mov edx, eax" + "\n" + "xor eax, eax" + "\n" + "call _sprintf"))
+
+  | "println" ";" => "lea rdi, [rip + fmt_nl]" + "\n" + "xor eax, eax" + "\n" + "call _printf"
+
+  | "printsp" ";" => "lea rdi, [rip + fmt_sp]" + "\n" + "xor eax, eax" + "\n" + "call _printf"
+
+  | "printn" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "mov esi, eax" + "\n" + "lea rdi, [rip + fmtn]" + "\n" + "xor eax, eax" + "\n" + "call _printf"
+
+  | "print" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "mov esi, eax" + "\n" + "lea rdi, [rip + fmt]" + "\n" + "xor eax, eax" + "\n" + "call _printf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => LET(val_asm, RULE("Expr", val), ptr + "\n" + "push rax" + "\n" + val_asm + "\n" + "pop rcx" + "\n" + "mov DWORD PTR [rcx], eax")
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";" => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\n" + "mov DWORD PTR [rbp-" + off + "], eax")

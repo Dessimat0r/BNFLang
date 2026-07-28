@@ -16,7 +16,7 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/ /[a-zA-Z_]\w*/:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => LET(val_asm, RULE("Expr", val), LET(new_n, n + "8", LET(anno, v + "@" + n, LET(new_i, i + val_asm + "\n" + "str w0, [x29, #-" + n + "]" + "\n" + "", RULE("Decls", new_n + "\x00" + new_i + "\x00" + REPLACE(v, anno, c))))))
   | /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
-    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\n"
+    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n"
      + ".text\n.globl _main\n"
      + "_main:\nstp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + RULE("Ceil16", n) + "\n"
      + i
@@ -35,16 +35,24 @@ S ::= /[0-9]+/:lc "\x00" "while" "(" /(?:[^()]+|\((?:[^()]+|\((?:[^()]+|\([^()]*
   | => ""
 
 Stmt ::=
-
-    "println" ";" => "adrp x0, fmt_nl@PAGE" + "\n" + "add x0, x0, fmt_nl@PAGEOFF" + "\n" + "bl _printf" |
-
-    "printsp" ";" => "adrp x0, fmt_sp@PAGE" + "\n" + "add x0, x0, fmt_sp@PAGEOFF" + "\n" + "bl _printf" |
-
-    "printn" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "str x0, [sp]" + "\n" + "adrp x0, fmtn@PAGE" + "\n" + "add x0, x0, fmtn@PAGEOFF" + "\n" + "bl _printf" |
-
-    "print" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "str x0, [sp]" + "\n" + "adrp x0, fmt@PAGE" + "\n" + "add x0, x0, fmt@PAGEOFF" + "\n" + "bl _printf" |
-    "sprintf" /[a-zA-Z_@0-9]+/:buf /[^;]+/:val ";"
+    "print3" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 /[a-zA-Z_@0-9]+/:v3 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + a3 + "\n" + "str x0, [sp, #16]" + "\n" + "adrp x0, fmt_3d@PAGE" + "\n" + "add x0, x0, fmt_3d@PAGEOFF" + "\n" + "bl _printf")))
+  | "print2" /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + "adrp x0, fmt_2d@PAGE" + "\n" + "add x0, x0, fmt_2d@PAGEOFF" + "\n" + "bl _printf"))
+  | "sprintf3" /[a-zA-Z_@0-9]+/:buf /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 /[a-zA-Z_@0-9]+/:v3 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), LET(buf_off, RULE("OffOf", buf + "\x00" + v1), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + a3 + "\n" + "str x0, [sp, #16]" + "\n" + "sub x0, x29, #" + buf_off + "\n" + "adrp x1, fmt_3d@PAGE" + "\n" + "add x1, x1, fmt_3d@PAGEOFF" + "\n" + "bl _sprintf"))))
+  | "sprintf2" /[a-zA-Z_@0-9]+/:buf /[a-zA-Z_@0-9]+/:v1 /[a-zA-Z_@0-9]+/:v2 ";"
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(buf_off, RULE("OffOf", buf + "\x00" + v1), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + "sub x0, x29, #" + buf_off + "\n" + "adrp x1, fmt_2d@PAGE" + "\n" + "add x1, x1, fmt_2d@PAGEOFF" + "\n" + "bl _sprintf")))
+  | "sprintf" /[a-zA-Z_@0-9]+/:buf /[a-zA-Z_@0-9]+/:val ";"
     => LET(val_asm, RULE("Expr", val), LET(buf_off, RULE("OffOf", buf + "\x00" + val), val_asm + "\n" + "str x0, [sp]" + "\n" + "sub x0, x29, #" + buf_off + "\n" + "adrp x1, fmt@PAGE" + "\n" + "add x1, x1, fmt@PAGEOFF" + "\n" + "bl _sprintf"))
+
+  | "println" ";" => "adrp x0, fmt_nl@PAGE" + "\n" + "add x0, x0, fmt_nl@PAGEOFF" + "\n" + "bl _printf"
+
+  | "printsp" ";" => "adrp x0, fmt_sp@PAGE" + "\n" + "add x0, x0, fmt_sp@PAGEOFF" + "\n" + "bl _printf"
+
+  | "printn" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "str x0, [sp]" + "\n" + "adrp x0, fmtn@PAGE" + "\n" + "add x0, x0, fmtn@PAGEOFF" + "\n" + "bl _printf"
+
+  | "print" /[^;]+/:val ";" => RULE("Expr", val) + "\n" + "str x0, [sp]" + "\n" + "adrp x0, fmt@PAGE" + "\n" + "add x0, x0, fmt@PAGEOFF" + "\n" + "bl _printf"
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
     => LET(val_asm, RULE("Expr", val), ptr + "\n" + "str x0, [sp, #-16]!" + "\n" + val_asm + "\n" + "ldr x1, [sp], #16" + "\n" + "str w0, [x1]")
   | /[a-zA-Z_@0-9]+/:name "=" /[^;]+/:val ";" => LET(off, RULE("OffOf", name + "\x00" + val), RULE("Expr", val) + "\n" + "str w0, [x29, #-" + off + "]")
@@ -117,35 +125,131 @@ AddrOf       ::= /[^@]+/:name "@" /[0-9]+/:off => "sub x0, x29, #" + off
 
 Ceil16 ::=
 
-    "64" => "64" |
-
-    "60" => "64" |
-
-    "56" => "64" |
-
-    "52" => "64" |
-
-    "48" => "48" |
-
-    "44" => "48" |
-
-    "40" => "48" |
-
-    "36" => "48" |
-
-    "32" => "32" |
-
-    "28" => "32" |
-
-    "24" => "32" |
-
-    "20" => "32" |
-
-    "16" => "16" |
-
-    "12" => "16" |
+    "4" => "16" |
 
     "8" => "16" |
 
-    "4" => "16" |
+    "12" => "16" |
+
+    "16" => "16" |
+
+    "20" => "32" |
+
+    "24" => "32" |
+
+    "28" => "32" |
+
+    "32" => "32" |
+
+    "36" => "48" |
+
+    "40" => "48" |
+
+    "44" => "48" |
+
+    "48" => "48" |
+
+    "52" => "64" |
+
+    "56" => "64" |
+
+    "60" => "64" |
+
+    "64" => "64" |
+
+    "68" => "80" |
+
+    "72" => "80" |
+
+    "76" => "80" |
+
+    "80" => "80" |
+
+    "84" => "96" |
+
+    "88" => "96" |
+
+    "92" => "96" |
+
+    "96" => "96" |
+
+    "100" => "112" |
+
+    "104" => "112" |
+
+    "108" => "112" |
+
+    "112" => "112" |
+
+    "116" => "128" |
+
+    "120" => "128" |
+
+    "124" => "128" |
+
+    "128" => "128" |
+
+    "132" => "144" |
+
+    "136" => "144" |
+
+    "140" => "144" |
+
+    "144" => "144" |
+
+    "148" => "160" |
+
+    "152" => "160" |
+
+    "156" => "160" |
+
+    "160" => "160" |
+
+    "164" => "176" |
+
+    "168" => "176" |
+
+    "172" => "176" |
+
+    "176" => "176" |
+
+    "180" => "192" |
+
+    "184" => "192" |
+
+    "188" => "192" |
+
+    "192" => "192" |
+
+    "196" => "208" |
+
+    "200" => "208" |
+
+    "204" => "208" |
+
+    "208" => "208" |
+
+    "212" => "224" |
+
+    "216" => "224" |
+
+    "220" => "224" |
+
+    "224" => "224" |
+
+    "228" => "240" |
+
+    "232" => "240" |
+
+    "236" => "240" |
+
+    "240" => "240" |
+
+    "244" => "256" |
+
+    "248" => "256" |
+
+    "252" => "256" |
+
+    "256" => "256" |
     "0" => "0" | /[0-9]+/:n => n

@@ -26,14 +26,14 @@ def compile_msbnf(text):
     # 3. Desugar DECL(v, n, i, c, code) helpers
     text = desugar_decl_helpers(text)
 
-    # 4. Desugar \+ (newline-concat operator)
+    # 4. Desugar sequential let statements in action expressions (MUST run before \\+)
+    text = desugar_let_actions(text)
+
+    # 5. Desugar \+ (newline-concat operator)
     text = desugar_newline_concat(text)
 
-    # 5. Expand pattern aliases ($NO_MUL:label -> regex:label)
+    # 6. Expand pattern aliases ($NO_MUL:label -> regex:label)
     text = expand_aliases(text, aliases)
-
-    # 6. Desugar sequential let statements in action expressions
-    text = desugar_let_actions(text)
 
     return text.strip() + "\n"
 
@@ -85,20 +85,20 @@ def expand_for_loops(text):
     pos = 0
     out = []
     while pos < len(text):
-        m = re.search(r'%for\s+([a-zA-Z_0-9,\s]+)\s+in\s+\[(.*?)\]\s*\{', text[pos:])
+        m = re.search(r'%for\s+([a-zA-Z_0-9,\s]+)\s+in\s+([^{\n]+)\s*\{', text[pos:])
         if not m:
             out.append(text[pos:])
             break
 
         out.append(text[pos:pos+m.start()])
         vars_str = m.group(1)
-        items_str = m.group(2)
+        expr_str = m.group(2).strip()
         var_names = [v.strip() for v in vars_str.split(",") if v.strip()]
 
         try:
-            items = ast.literal_eval("[" + items_str + "]")
+            items = list(eval(expr_str, {"range": range, "list": list, "tuple": tuple}))
         except Exception as e:
-            raise ValueError(f"Failed to parse %for loop items: {items_str} - {e}")
+            raise ValueError(f"Failed to parse %for loop expression: {expr_str} - {e}")
 
         start_body = pos + m.end()
         depth = 1
@@ -118,89 +118,83 @@ def expand_for_loops(text):
         expanded_lines = []
         for item in items:
             if not isinstance(item, (tuple, list)):
-                item = (item,)
+                item = [item]
+            if len(item) != len(var_names):
+                raise ValueError(f"For loop variable count mismatch: expected {len(var_names)} vars, got {len(item)} in item {item}")
 
-            sub_body = body
-            for var_name, var_val in zip(var_names, item):
-                val_str = str(var_val)
-                sub_body = sub_body.replace("{" + var_name + "}", val_str)
+            item_body = body
+            scope = dict(zip(var_names, item))
 
-            expanded_lines.append(sub_body)
+            # Replace {expression} in body
+            def replacer(match):
+                expr = match.group(1).strip()
+                try:
+                    return str(eval(expr, {}, scope))
+                except Exception:
+                    return str(scope.get(expr, match.group(0)))
+
+            item_body = re.sub(r'\{([^}]+)\}', replacer, item_body)
+            expanded_lines.append(item_body)
 
         out.append("\n".join(expanded_lines))
 
     return "".join(out)
 
 def expand_aliases(text, aliases):
-    """Replace $ALIAS with its mapped regex/terminal pattern, keeping labels attached."""
-    sorted_keys = sorted(aliases.keys(), key=len, reverse=True)
-
-    for key in sorted_keys:
-        val = aliases[key]
-        pattern = re.compile(re.escape(key) + r'(:[a-zA-Z_]\w*)?')
-        def replacer(m):
-            lbl = m.group(1) if m.group(1) else ""
-            return val + lbl
-        text = pattern.sub(replacer, text)
-
+    """Expand pattern aliases in rules (e.g. $NO_MUL:label -> regex:label)."""
+    for name, pattern in sorted(aliases.items(), key=lambda x: -len(x[0])):
+        text = text.replace(name, pattern)
     return text
 
 def desugar_let_actions(text):
-    """Desugar sequential `let x = val;` statements inside actions into LET(x, val, body)."""
+    """Desugar sequential `let x = e; body` inside action expressions."""
     lines = text.split("\n")
     out_lines = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if "=>" in line:
-            parts = line.split("=>", 1)
-            pat_part = parts[0]
-            act_part = parts[1].strip()
 
-            action_block = [act_part]
-            j = i + 1
-            while j < len(lines):
-                sline = lines[j].strip()
-                if not sline or sline.startswith("//"):
-                    j += 1
-                    continue
-                if sline.startswith("|") or "::=" in sline:
-                    break
-                action_block.append(sline)
-                j += 1
+    for line in lines:
+        if "=>" in line and "let " in line:
+            m = re.search(r'(=>\s*)(.+)$', line)
+            if m:
+                prefix = line[:m.start()]
+                arrow = m.group(1)
+                action_str = m.group(2).strip()
 
-            full_act = " ".join(action_block).strip()
-            if full_act.startswith("let "):
-                desugared = transform_let_block(full_act)
-                out_lines.append(pat_part + "=> " + desugared)
-                i = j
+                desugared = parse_and_desugar_lets(action_str)
+                out_lines.append(prefix + arrow + desugared)
                 continue
-            else:
-                out_lines.append(line)
-                i += 1
-        else:
-            out_lines.append(line)
-            i += 1
+
+        out_lines.append(line)
 
     return "\n".join(out_lines)
 
-def transform_let_block(text):
-    """Transform sequential `let name = expr; ... body` into nested `LET(name, expr, body)`."""
-    statements = []
-    cur = text
-    while cur.startswith("let "):
-        m = re.match(r'^let\s+([a-zA-Z_]\w*)\s*=\s*(.*?);\s*(.*)', cur, re.DOTALL)
+def parse_and_desugar_lets(action_str):
+    """
+    Transform:
+    let val_asm = RULE("Expr", val); let buf_off = RULE("OffOf", buf + "\x00" + val); body...
+    into nested LET calls:
+    LET(val_asm, RULE("Expr", val), LET(buf_off, RULE("OffOf", buf + "\x00" + val), body...))
+    """
+    lets = []
+    rem = action_str
+
+    while True:
+        m = re.match(r'^\s*let\s+([a-zA-Z_]\w*)\s*=\s*([^;]+?)\s*;\s*', rem)
         if not m:
             break
         var_name = m.group(1)
-        var_val = m.group(2).strip()
-        cur = m.group(3).strip()
-        statements.append((var_name, var_val))
+        expr_val = m.group(2)
+        lets.append((var_name, expr_val))
+        rem = rem[m.end():]
 
-    body = cur
+    if not lets:
+        return action_str
+
+    body = rem.strip()
     result = body
-    for var_name, var_val in reversed(statements):
-        result = f'LET({var_name}, {var_val}, {result})'
+
+    for var_name, expr_val in reversed(lets):
+        result = f'LET({var_name}, {expr_val}, {result})'
+
     return result
 
 def main():
@@ -212,9 +206,9 @@ def main():
     out_path = sys.argv[2]
 
     with open(inp_path, "r", encoding="utf-8") as f:
-        src = f.read()
+        text = f.read()
 
-    compiled = compile_msbnf(src)
+    compiled = compile_msbnf(text)
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(compiled)
