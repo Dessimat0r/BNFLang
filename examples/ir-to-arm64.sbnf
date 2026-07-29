@@ -1,0 +1,103 @@
+// Micro-IR → ARM64 assembly (Apple Silicon, macOS) (Meta-SBNF)
+
+Program ::= /[\s\S]*/:src
+    => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n.text\n"
+     + RULE("Lines", src)
+
+Lines ::= /[^\n]+/:l "\n" /[\s\S]*/:rest => RULE("Line", l) + "\n" + RULE("Lines", rest)
+       | /[^\n]+/:l => RULE("Line", l)
+       | => ""
+
+Line ::= "GLOBAL" /[a-zA-Z_]\w*/:gname /[0-9]+/:val
+    => ".data\n.globl _" + gname + "\n.p2align 2\n_" + gname + ": .word " + val + "\n.text"
+  | "FUNC" /[a-zA-Z_]\w*/:fname => ".globl " + fname + "\n" + fname + ":"
+  | "FRAME" /[0-9]+/:sz => "stp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + sz
+  | "END_FUNC" => "mov sp, x29\nldp x29, x30, [sp], #16\nret"
+  | "INIT_PTR" /[^@]+/:v "@" /[0-9]+/:off " = &" /[^@]+/:ref "@" /[0-9]+/:ref_off => "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + off + "]"
+  | "INIT_PTR" /[^@]+/:v "@" /[0-9]+/:off " = 0" => "str xzr, [x29, #-" + off + "]"
+  | "INIT_ZERO" /[^@]+/:v "@" /[0-9]+/:off => "str wzr, [x29, #-" + off + "]"
+  | "INIT_VAR" /[^@]+/:v "@" /[0-9]+/:off " = " /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "str w0, [x29, #-" + off + "]")
+  | "LABEL" /[.\w]+/:lbl => lbl + ":"
+  | "JMP_Z" /[^\n,]+/:cond "," /[.\w]+/:lbl => LET(c_asm, RULE("Expr", cond), c_asm + "\n" + "cbz w0, " + lbl)
+  | "JMP_NZ" /[^\n,]+/:cond "," /[.\w]+/:lbl => LET(c_asm, RULE("Expr", cond), c_asm + "\n" + "cbnz w0, " + lbl)
+  | "JMP" /[.\w]+/:lbl => "b " + lbl
+  | "RETURN" /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "mov sp, x29" + "\n" + "ldp x29, x30, [sp], #16" + "\n" + "ret")
+  | "PARAM1" /[^@]+/:v "@" /[0-9]+/:off => "str w0, [x29, #-" + off + "]"
+  | "PARAM2" /[^@]+/:v "@" /[0-9]+/:off => "str w1, [x29, #-" + off + "]"
+  | "PARAM3" /[^@]+/:v "@" /[0-9]+/:off => "str w2, [x29, #-" + off + "]"
+  | "PARAM4" /[^@]+/:v "@" /[0-9]+/:off => "str w3, [x29, #-" + off + "]"
+  | "STORE_GVAR" /[a-zA-Z_]\w*/:gname "=" /[\s\S]+/:val
+    => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "adrp x16, _" + gname + "@PAGE" + "\n" + "add x16, x16, _" + gname + "@PAGEOFF" + "\n" + "str w0, [x16]")
+  | "STORE_PTR_VAR" "_aptr" /[^=]+/:name "=" /[\s\S]+/:val
+    => LET(val_asm, RULE("Expr", val), LET(off, RULE("OffOf", "_aptr" + name), val_asm + "\n" + "str x0, [x29, #-" + off + "]"))
+  | "STORE_DEREF" /[^\n=]+/:ptr "=" /[\s\S]+/:val
+    => LET(p_asm, RULE("Expr", ptr), LET(val_asm, RULE("Expr", val), p_asm + "\n" + "str w0, [sp, #-16]!" + "\n" + val_asm + "\n" + "ldr x1, [sp], #16" + "\n" + "str w0, [x1]"))
+  | "STORE" /[^@]+/:v "@" /[0-9]+/:off " = " /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "str w0, [x29, #-" + off + "]")
+  | "CALL_DEST3" /[^@]+/:v "@" /[0-9]+/:off " = " /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "str w0, [sp, #-16]!" + "\n" + a2 + "\n" + "str w0, [sp, #-16]!" + "\n" + a3 + "\n" + "mov w2, w0" + "\n" + "ldr w1, [sp], #16" + "\n" + "ldr w0, [sp], #16" + "\n" + "bl _" + func + "\n" + "str w0, [x29, #-" + off + "]")))
+  | "CALL_DEST2" /[^@]+/:v "@" /[0-9]+/:off " = " /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[\s\S]+/:v2
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "str w0, [sp, #-16]!" + "\n" + a2 + "\n" + "mov w1, w0" + "\n" + "ldr w0, [sp], #16" + "\n" + "bl _" + func + "\n" + "str w0, [x29, #-" + off + "]"))
+  | "CALL_DEST1" /[^@]+/:v "@" /[0-9]+/:off " = " /[a-zA-Z_]\w*/:func /[\s\S]+/:v1
+    => LET(a1, RULE("Expr", v1), a1 + "\n" + "bl _" + func + "\n" + "str w0, [x29, #-" + off + "]")
+  | "CALL_DEST0" /[^@]+/:v "@" /[0-9]+/:off " = " /[a-zA-Z_]\w*/:func
+    => "bl _" + func + "\n" + "str w0, [x29, #-" + off + "]"
+  | "CALL3" /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "str w0, [sp, #-16]!" + "\n" + a2 + "\n" + "str w0, [sp, #-16]!" + "\n" + a3 + "\n" + "mov w2, w0" + "\n" + "ldr w1, [sp], #16" + "\n" + "ldr w0, [sp], #16" + "\n" + "bl _" + func)))
+  | "CALL2" /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[\s\S]+/:v2
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "str w0, [sp, #-16]!" + "\n" + a2 + "\n" + "mov w1, w0" + "\n" + "ldr w0, [sp], #16" + "\n" + "bl _" + func))
+  | "CALL1" /[a-zA-Z_]\w*/:func /[\s\S]+/:v1 => LET(a1, RULE("Expr", v1), a1 + "\n" + "bl _" + func)
+  | "CALL0" /[a-zA-Z_]\w*/:func => "bl _" + func
+  | "PRINT3" /[a-zA-Z_]\w*/:fmt /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + a3 + "\n" + "str x0, [sp, #16]" + "\n" + "adrp x0, " + fmt + "@PAGE" + "\n" + "add x0, x0, " + fmt + "@PAGEOFF" + "\n" + "bl _printf")))
+  | "PRINT2" /[a-zA-Z_]\w*/:fmt /[^ ]+/:v1 /[\s\S]+/:v2
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + "adrp x0, " + fmt + "@PAGE" + "\n" + "add x0, x0, " + fmt + "@PAGEOFF" + "\n" + "bl _printf"))
+  | "PRINT1" /[a-zA-Z_]\w*/:fmt /[\s\S]+/:val
+    => LET(a1, RULE("Expr", val), a1 + "\n" + "str x0, [sp]" + "\n" + "adrp x0, " + fmt + "@PAGE" + "\n" + "add x0, x0, " + fmt + "@PAGEOFF" + "\n" + "bl _printf")
+  | "PRINT0" /[a-zA-Z_]\w*/:fmt => "adrp x0, " + fmt + "@PAGE" + "\n" + "add x0, x0, " + fmt + "@PAGEOFF" + "\n" + "bl _printf"
+  | "SPRINTF3" /[^@]+/:v "@" /[0-9]+/:off /[a-zA-Z_]\w*/:fmt /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + a3 + "\n" + "str x0, [sp, #16]" + "\n" + "sub x0, x29, #" + off + "\n" + "adrp x1, " + fmt + "@PAGE" + "\n" + "add x1, x1, " + fmt + "@PAGEOFF" + "\n" + "bl _sprintf")))
+  | "SPRINTF2" /[^@]+/:v "@" /[0-9]+/:off /[a-zA-Z_]\w*/:fmt /[^ ]+/:v1 /[\s\S]+/:v2
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "str x0, [sp]" + "\n" + a2 + "\n" + "str x0, [sp, #8]" + "\n" + "sub x0, x29, #" + off + "\n" + "adrp x1, " + fmt + "@PAGE" + "\n" + "add x1, x1, " + fmt + "@PAGEOFF" + "\n" + "bl _sprintf"))
+  | "SPRINTF" /[^@]+/:v "@" /[0-9]+/:off /[a-zA-Z_]\w*/:fmt /[\s\S]+/:val
+    => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "str x0, [sp]" + "\n" + "sub x0, x29, #" + off + "\n" + "adrp x1, " + fmt + "@PAGE" + "\n" + "add x1, x1, " + fmt + "@PAGEOFF" + "\n" + "bl _sprintf")
+  | "none" => ""
+  | /[\s]*/ => ""
+
+OffOf ::= /[^@]+/ "@" /[0-9]+/:off /[\s\S]*/ => off | /[a-zA-Z_]\w*/:name /[\s\S]*/ => name
+
+Expr ::= "(" /[^)]+/:inner ")" => RULE("OpExpr", inner)
+       | /[\s\S]+/:s => RULE("PrimExpr", s)
+
+OpExpr ::=
+    /[^ ]+/:l "AND" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "and w0, w1, w0" |
+    /[^ ]+/:l "ORR" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "orr w0, w1, w0" |
+    /[^ ]+/:l "EOR" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "eor w0, w1, w0" |
+    /[^ ]+/:l "LSL" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "lsl w0, w1, w0" |
+    /[^ ]+/:l "ASR" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "asr w0, w1, w0" |
+    /[^ ]+/:l "EQ" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, eq" |
+    /[^ ]+/:l "NE" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, ne" |
+    /[^ ]+/:l "LE" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, le" |
+    /[^ ]+/:l "LT" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, lt" |
+    /[^ ]+/:l "GE" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, ge" |
+    /[^ ]+/:l "GT" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "cmp w1, w0" + "\n" + "cset w0, gt" |
+    /[^ ]+/:l "ADD" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str x0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr x1, [sp], #16" + "\n" + "sxtw x0, w0" + "\n" + "add x0, x1, x0"
+  | /[^ ]+/:l "SUB" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "sub w0, w1, w0"
+  | /[^ ]+/:l "MUL" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "mul w0, w1, w0"
+  | /[^ ]+/:l "DIV" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "sdiv w0, w1, w0"
+  | /[^ ]+/:l "MOD" /[\s\S]+/:r => RULE("Expr", l) + "\n" + "str w0, [sp, #-16]!" + "\n" + RULE("Expr", r) + "\n" + "ldr w1, [sp], #16" + "\n" + "sdiv w8, w1, w0" + "\n" + "msub w0, w8, w0, w1"
+  | "NOT" /[\s\S]+/:r => RULE("Expr", r) + "\n" + "mvn w0, w0"
+
+PrimExpr ::=
+    "0" /[\s]*/ => "mov w0, 0"
+  | /[0-9]+/:n => "mov w0, " + n
+  | "G_" /[a-zA-Z_]\w*/:gname => "adrp x16, _G_" + gname + "@PAGE\nadd x16, x16, _G_" + gname + "@PAGEOFF\nldr w0, [x16]"
+  | "ADDR" /[^@]+/:v "@" /[0-9]+/:off => "sub x0, x29, #" + off
+  | "DEREF" /[^@]+/:v "@" /[0-9]+/:off => "ldr x0, [x29, #-" + off + "]\nldr w0, [x0]"
+  | "DEREF" "DEREF" /[^@]+/:v "@" /[0-9]+/:off => "ldr x0, [x29, #-" + off + "]\nldr x0, [x0]\nldr w0, [x0]"
+  | "CALL_VAL3" /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "str w0, [sp, #-16]!" + "\n" + a2 + "\n" + "str w0, [sp, #-16]!" + "\n" + a3 + "\n" + "mov w2, w0" + "\n" + "ldr w1, [sp], #16" + "\n" + "ldr w0, [sp], #16" + "\n" + "bl _" + func)))
+  | "CALL_VAL2" /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[\s\S]+/:v2
+    => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), a1 + "\n" + "str w0, [sp, #-16]!" + "\n" + a2 + "\n" + "mov w1, w0" + "\n" + "ldr w0, [sp], #16" + "\n" + "bl _" + func))
+  | "CALL_VAL1" /[a-zA-Z_]\w*/:func /[\s\S]+/:v1 => LET(a1, RULE("Expr", v1), a1 + "\n" + "bl _" + func)
+  | "CALL_VAL0" /[a-zA-Z_]\w*/:func => "bl _" + func
+  | /[^@]+/:v "@" /[0-9]+/:off => "ldr w0, [x29, #-" + off + "]"

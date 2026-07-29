@@ -17,7 +17,7 @@ def match_grammar(grammar, text, state=None):
         raise SyntaxError("Parse failed")
     return r
 
-OPT_RULES = {'Expr', 'Compare', 'AddExpr', 'MulExpr', 'Primary', 'Ceil16'}
+OPT_RULES = {'Expr', 'Compare', 'AddExpr', 'MulExpr', 'Primary', 'Ceil16', 'Line', 'OpExpr'}
 
 def _rule(g, name, text, pos, state, scope):
     rule = g.rules.get(name)
