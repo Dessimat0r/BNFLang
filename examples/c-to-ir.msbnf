@@ -33,7 +33,7 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
   | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => let val_ir = RULE("Expr", val); DECL(v, n, i, c, "INIT_VAR " + v + "@" + n + " = " + val_ir + "\n")
   | $DECL_STATE /[\s\S]*/:c
-    => "FRAME " + RULE("Ceil16", n + "32") + "\n"
+    => "FRAME " + CEIL16(n + 64) + "\n"
      + i
      + RULE("Stmts", "10\x00none\x00none\x00" + c)
      + "END_FUNC\n"
@@ -159,9 +159,3 @@ Primary ::= "(" $PAREN:e ")" /[\s]*/ => RULE("Expr", e)
           | Var:name => name
 
 PtrChain ::= Var:name => name | "*" PtrChain:inner => "DEREF " + inner
-
-Ceil16 ::=
-%for k in range(4, 289, 4) {
-    "{k}" => "{((k + 15) // 16) * 16}" |
-}
-    "0" => "0" | $NUM:n => n

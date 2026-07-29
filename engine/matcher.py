@@ -17,7 +17,7 @@ def match_grammar(grammar, text, state=None):
         raise SyntaxError("Parse failed")
     return r
 
-OPT_RULES = {'Expr', 'Compare', 'AddExpr', 'MulExpr', 'Primary', 'Ceil16', 'Line', 'OpExpr'}
+OPT_RULES = {'Expr', 'Compare', 'AddExpr', 'MulExpr', 'Primary', 'Line', 'OpExpr'}
 
 def _rule(g, name, text, pos, state, scope):
     rule = g.rules.get(name)
@@ -156,6 +156,9 @@ def eval_node(node, scope, state):
                         return str(i)
                 i += 1
             return str(len(text))
+        if fn == 'CEIL16':
+            val = int(str(args[0])) if args else 0
+            return str(((val + 15) // 16) * 16)
         if fn in (state.get('_g') or {}).rules:
             return call_rule([fn] + args, state)
         raise KeyError(f"Unknown: {fn}")
