@@ -42,20 +42,12 @@ Stmts ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/
 
 S ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}"
-    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
   | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}"
-    => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body)
   | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /[^)]*/:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
     => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /[^)]*/:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}"
-    => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2)
   | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /[^)]*/:cond ")" "{" BlockBody:body "}"
-    => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + body)
   | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:first "\n" /[\s\S]*/:rest
     => RULE("GenStmt", cl + "\x00" + bl + "\x00" + first) + "\n" + RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + rest)
   | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"

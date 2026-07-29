@@ -47,20 +47,12 @@ Stmts ::= $STMT_STATE /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl
 
 S ::= $STMT_STATE "while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "while" "(" $PAREN:cond ")" "{" BlockBody:body "}"
-    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
   | $STMT_STATE "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}"
-    => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body)
   | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
     => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}"
-    => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2)
   | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:body "}"
-    => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + body)
   | $STMT_STATE Stmt:first "\n" /[\s\S]*/:rest
     => RULE("GenStmt", cl + "\x00" + bl + "\x00" + first) + "\n" + RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + rest)
   | $STMT_STATE Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"
