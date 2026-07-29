@@ -45,18 +45,23 @@ DeclZeroCode ::= "buf_pad" /[\s\S]*/ => ""
 
 Stmts ::= $STMT_STATE /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + code)
 
-S ::= $STMT_STATE "while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
-    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
-    => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
-    => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
-    => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE Stmt:first "\n" /[\s\S]*/:rest
-    => RULE("GenStmt", cl + "\x00" + bl + "\x00" + first) + "\n" + RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $STMT_STATE Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"
+S ::= $STMT_STATE OneStmt:stmt /[\s\S]*/:rest
+    => RULE("GenConstruct", lc + "\x00" + cl + "\x00" + bl + "\x00" + stmt)
+     + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
   | => ""
+
+OneStmt ::= "while" "(" $PAREN:cond ")" "{" BlockBody:body "}" => "WHILE\x00" + cond + "\x00" + body
+          | "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}" => "DO_WHILE\x00" + cond + "\x00" + body
+          | "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" => "IF_ELSE\x00" + cond + "\x00" + b1 + "\x00" + b2
+          | "if" "(" $PAREN:cond ")" "{" BlockBody:body "}" => "IF\x00" + cond + "\x00" + body
+          | Stmt:s "\n" => "STMT\x00" + s
+          | Stmt:s => "STMT\x00" + s
+
+GenConstruct ::= $STMT_STATE "WHILE\x00" /[^\x00]+/ :cond "\x00" /[\s\S]*/:body => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
+               | $STMT_STATE "DO_WHILE\x00" /[^\x00]+/ :cond "\x00" /[\s\S]*/:body => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body)
+               | $STMT_STATE "IF_ELSE\x00" /[^\x00]*/:cond "\x00" /[^\x00]*/:b1 "\x00" /[\s\S]*/:b2 => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2)
+               | $STMT_STATE "IF\x00" /[^\x00]*/:cond "\x00" /[\s\S]*/:body => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body)
+               | $STMT_STATE "STMT\x00" /[\s\S]*/:s => RULE("GenStmt", cl + "\x00" + bl + "\x00" + s)
 
 GenStmt ::= /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "break;" => "JMP .L" + bl
           | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "continue;" => "JMP .L" + cl

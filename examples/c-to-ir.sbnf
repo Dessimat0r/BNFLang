@@ -40,18 +40,23 @@ DeclZeroCode ::= "buf_pad" /[\s\S]*/ => ""
 
 Stmts ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + code)
 
-S ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
-    => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
-    => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /[^)]*/:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
-    => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
-    => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:first "\n" /[\s\S]*/:rest
-    => RULE("GenStmt", cl + "\x00" + bl + "\x00" + first) + "\n" + RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"
+S ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" OneStmt:stmt /[\s\S]*/:rest
+    => RULE("GenConstruct", lc + "\x00" + cl + "\x00" + bl + "\x00" + stmt)
+     + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
   | => ""
+
+OneStmt ::= "while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" => "WHILE\x00" + cond + "\x00" + body
+          | "do_while" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" => "DO_WHILE\x00" + cond + "\x00" + body
+          | "if" "(" /[^)]*/:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" => "IF_ELSE\x00" + cond + "\x00" + b1 + "\x00" + b2
+          | "if" "(" /[^)]*/:cond ")" "{" BlockBody:body "}" => "IF\x00" + cond + "\x00" + body
+          | Stmt:s "\n" => "STMT\x00" + s
+          | Stmt:s => "STMT\x00" + s
+
+GenConstruct ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "WHILE\x00" /[^\x00]+/ :cond "\x00" /[\s\S]*/:body => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
+               | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "DO_WHILE\x00" /[^\x00]+/ :cond "\x00" /[\s\S]*/:body => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body)
+               | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "IF_ELSE\x00" /[^\x00]*/:cond "\x00" /[^\x00]*/:b1 "\x00" /[\s\S]*/:b2 => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2)
+               | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "IF\x00" /[^\x00]*/:cond "\x00" /[\s\S]*/:body => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body)
+               | /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "STMT\x00" /[\s\S]*/:s => RULE("GenStmt", cl + "\x00" + bl + "\x00" + s)
 
 GenStmt ::= /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "break;" => "JMP .L" + bl
           | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "continue;" => "JMP .L" + cl
