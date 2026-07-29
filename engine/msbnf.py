@@ -13,8 +13,32 @@ BUILTIN_ALIASES = {
     "$NUM":     r"/[0-9]+/",
 }
 
-def compile_msbnf(text):
+import os
+
+def expand_includes(text, base_dir="."):
+    """Expand %include "filename.msbnf" directives inline."""
+    lines = text.split("\n")
+    out_lines = []
+    for line in lines:
+        m = re.match(r'^\s*%include\s+["\']([^"\']+)["\']\s*$', line.strip())
+        if m:
+            inc_path = os.path.join(base_dir, m.group(1))
+            if os.path.exists(inc_path):
+                with open(inc_path, "r", encoding="utf-8") as f:
+                    inc_text = f.read()
+                inc_text = expand_includes(inc_text, os.path.dirname(inc_path))
+                out_lines.append(inc_text)
+            else:
+                raise FileNotFoundError(f"Include file not found: {inc_path}")
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines)
+
+def compile_msbnf(text, base_dir="."):
     """Compile Meta-SBNF (.msbnf) text into standard SBNF (.sbnf) text."""
+    # 0. Expand %include directives
+    text = expand_includes(text, base_dir)
+
     # 1. Parse and extract custom aliases ($MY_ALIAS = ...)
     text, custom_aliases = extract_custom_aliases(text)
 
@@ -228,7 +252,8 @@ def main():
     with open(inp_path, "r", encoding="utf-8") as f:
         msbnf_src = f.read()
 
-    sbnf_compiled = compile_msbnf(msbnf_src)
+    base_dir = os.path.dirname(os.path.abspath(inp_path))
+    sbnf_compiled = compile_msbnf(msbnf_src, base_dir)
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(sbnf_compiled)

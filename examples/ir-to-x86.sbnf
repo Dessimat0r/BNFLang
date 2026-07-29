@@ -1,12 +1,17 @@
 // Micro-IR → x86-64 assembly (macOS) (Meta-SBNF)
-
 Program ::= /[\s\S]*/:src
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n.text\n.intel_syntax noprefix\n"
      + RULE("Lines", src)
 
+// Shared Micro-IR Tokens & Boilerplate (Meta-SBNF)
+
 Lines ::= /[^\n]+/:l "\n" /[\s\S]*/:rest => RULE("Line", l) + "\n" + RULE("Lines", rest)
        | /[^\n]+/:l => RULE("Line", l)
        | => ""
+
+
+@def STORE_STACK(val_asm, off):
+    val_asm + "\n" + "mov DWORD PTR [rbp-" + off + "], eax"
 
 Line ::= "GLOBAL" /[a-zA-Z_]\w*/:gname /[0-9]+/:val
     => ".data\n.globl _" + gname + "\n_" + gname + ": .long " + val + "\n.text\n.intel_syntax noprefix"
@@ -16,22 +21,21 @@ Line ::= "GLOBAL" /[a-zA-Z_]\w*/:gname /[0-9]+/:val
   | "INIT_PTR" /[^@]+/:v "@" /[0-9]+/:off " = &" /[^@]+/:ref "@" /[0-9]+/:ref_off => "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + off + "], rax"
   | "INIT_PTR" /[^@]+/:v "@" /[0-9]+/:off " = 0" => "mov QWORD PTR [rbp-" + off + "], 0"
   | "INIT_ZERO" /[^@]+/:v "@" /[0-9]+/:off => "mov DWORD PTR [rbp-" + off + "], 0"
-  | "INIT_VAR" /[^@]+/:v "@" /[0-9]+/:off " = " /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "mov DWORD PTR [rbp-" + off + "], eax")
+  | "INIT_VAR" /[^@]+/:v "@" /[0-9]+/:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
+  | "STORE" /[^@]+/:v "@" /[0-9]+/:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
   | "LABEL" /[.\w]+/:lbl => lbl + ":"
   | "JMP_Z" /[^\n,]+/:cond "," /[.\w]+/:lbl => LET(c_asm, RULE("Expr", cond), c_asm + "\n" + "test eax, eax" + "\n" + "je " + lbl)
   | "JMP_NZ" /[^\n,]+/:cond "," /[.\w]+/:lbl => LET(c_asm, RULE("Expr", cond), c_asm + "\n" + "test eax, eax" + "\n" + "jne " + lbl)
   | "JMP" /[.\w]+/:lbl => "jmp " + lbl
   | "RETURN" /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "mov rsp, rbp" + "\n" + "pop rbp" + "\n" + "ret")
-  | "PARAM1" /[^@]+/:v "@" /[0-9]+/:off => "mov DWORD PTR [rbp-" + off + "], edi"
-  | "PARAM2" /[^@]+/:v "@" /[0-9]+/:off => "mov DWORD PTR [rbp-" + off + "], esi"
-  | "PARAM3" /[^@]+/:v "@" /[0-9]+/:off => "mov DWORD PTR [rbp-" + off + "], edx"
-  | "PARAM4" /[^@]+/:v "@" /[0-9]+/:off => "mov DWORD PTR [rbp-" + off + "], ecx"
+%for i, reg in enumerate(["edi", "esi", "edx", "ecx"], 1) {
+  | "PARAM{i}" /[^@]+/:v "@" /[0-9]+/:off => "mov DWORD PTR [rbp-" + off + "], {reg}"
+}
   | "STORE_GVAR" /[a-zA-Z_]\w*/:gname "=" /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "mov DWORD PTR [rip + _" + gname + "], eax")
   | "STORE_PTR_VAR" "_aptr" /[^=]+/:name "=" /[\s\S]+/:val
     => LET(val_asm, RULE("Expr", val), LET(off, RULE("OffOf", "_aptr" + name), val_asm + "\n" + "mov QWORD PTR [rbp-" + off + "], rax"))
   | "STORE_DEREF" /[^\n=]+/:ptr "=" /[\s\S]+/:val
     => LET(p_asm, RULE("Expr", ptr), LET(val_asm, RULE("Expr", val), p_asm + "\n" + "push rax" + "\n" + val_asm + "\n" + "pop rcx" + "\n" + "mov DWORD PTR [rcx], eax"))
-  | "STORE" /[^@]+/:v "@" /[0-9]+/:off " = " /[\s\S]+/:val => LET(val_asm, RULE("Expr", val), val_asm + "\n" + "mov DWORD PTR [rbp-" + off + "], eax")
   | "CALL_DEST3" /[^@]+/:v "@" /[0-9]+/:off " = " /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), a1 + "\n" + "push rax" + "\n" + a2 + "\n" + "push rax" + "\n" + a3 + "\n" + "mov edx, eax" + "\n" + "pop rax" + "\n" + "mov esi, eax" + "\n" + "pop rax" + "\n" + "mov edi, eax" + "\n" + "call _" + func + "\n" + "mov DWORD PTR [rbp-" + off + "], eax")))
   | "CALL_DEST2" /[^@]+/:v "@" /[0-9]+/:off " = " /[a-zA-Z_]\w*/:func /[^ ]+/:v1 /[\s\S]+/:v2

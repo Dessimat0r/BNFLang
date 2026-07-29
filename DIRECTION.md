@@ -4,7 +4,9 @@ A compiler is a sequence of text transformations:
 
 ```
 counter.c
-    ↓  apply c-to-asm.sbnf
+    ↓  apply c-to-ir.sbnf
+counter.ir
+    ↓  apply ir-to-x86.sbnf or ir-to-arm64.sbnf
 counter.s
     ↓  apply asm-to-bin.sbnf
 counter
@@ -18,16 +20,16 @@ There is no mutable state store. Variable offsets and label counters are embedde
 
 ```
 WhileStmt ::= "while" "(" cond ")" body
-    => labels + cond + "cmp eax, 0\nje " + exit + "\n"
-     + body + "jmp " + start + "\n" + exit + ":\n"
+    => labels + cond + "JMP_Z " + cond + ", .L1\n"
+     + body + "JMP .L0\nLABEL .L1\n"
 ```
 
-The grammar rule emits assembly directly — the grammar IS the code generator. There is no AST, no IR, no separate code generation pass.
+The grammar rules transform C code into Micro-IR, and Micro-IR into target assembly. There are no Python AST or symbol table objects; everything is driven by pure PEG grammar rewrites.
 
 ## Goals
 
 - Source to machine code using only BNF-style rewrites, applied repeatedly
-- Every stage — parsing, codegen, instruction encoding — expressed as grammar rules
+- Every stage — parsing, IR generation, target codegen, instruction encoding — expressed as grammar rules
 - Everything is pure text transformation; state is text, not memory
 - Explore whether a single notation can span the entire compiler pipeline
 

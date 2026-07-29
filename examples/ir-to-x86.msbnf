@@ -1,16 +1,12 @@
 // Micro-IR → x86-64 assembly (macOS) (Meta-SBNF)
-$IDENT = /[a-zA-Z_]\w*/
-$LABEL = /[.\w]+/
-$VAR = /[^@]+/
-$NUM = /[0-9]+/
-
 Program ::= /[\s\S]*/:src
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n.text\n.intel_syntax noprefix\n"
      + RULE("Lines", src)
 
-Lines ::= /[^\n]+/:l "\n" /[\s\S]*/:rest => RULE("Line", l) + "\n" + RULE("Lines", rest)
-       | /[^\n]+/:l => RULE("Line", l)
-       | => ""
+%include "ir_common.msbnf"
+
+@def STORE_STACK(val_asm, off):
+    val_asm \+ "mov DWORD PTR [rbp-" + off + "], eax"
 
 Line ::= "GLOBAL" $IDENT:gname $NUM:val
     => ".data\n.globl _" + gname + "\n_" + gname + ": .long " + val + "\n.text\n.intel_syntax noprefix"
@@ -20,22 +16,21 @@ Line ::= "GLOBAL" $IDENT:gname $NUM:val
   | "INIT_PTR" $VAR:v "@" $NUM:off " = &" $VAR:ref "@" $NUM:ref_off => "lea rax, [rbp-" + ref_off + "]\nmov QWORD PTR [rbp-" + off + "], rax"
   | "INIT_PTR" $VAR:v "@" $NUM:off " = 0" => "mov QWORD PTR [rbp-" + off + "], 0"
   | "INIT_ZERO" $VAR:v "@" $NUM:off => "mov DWORD PTR [rbp-" + off + "], 0"
-  | "INIT_VAR" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "mov DWORD PTR [rbp-" + off + "], eax"
+  | "INIT_VAR" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
+  | "STORE" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
   | "LABEL" $LABEL:lbl => lbl + ":"
   | "JMP_Z" /[^\n,]+/:cond "," $LABEL:lbl => let c_asm = RULE("Expr", cond); c_asm \+ "test eax, eax" \+ "je " + lbl
   | "JMP_NZ" /[^\n,]+/:cond "," $LABEL:lbl => let c_asm = RULE("Expr", cond); c_asm \+ "test eax, eax" \+ "jne " + lbl
   | "JMP" $LABEL:lbl => "jmp " + lbl
   | "RETURN" /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "mov rsp, rbp" \+ "pop rbp" \+ "ret"
-  | "PARAM1" $VAR:v "@" $NUM:off => "mov DWORD PTR [rbp-" + off + "], edi"
-  | "PARAM2" $VAR:v "@" $NUM:off => "mov DWORD PTR [rbp-" + off + "], esi"
-  | "PARAM3" $VAR:v "@" $NUM:off => "mov DWORD PTR [rbp-" + off + "], edx"
-  | "PARAM4" $VAR:v "@" $NUM:off => "mov DWORD PTR [rbp-" + off + "], ecx"
+%for i, reg in enumerate(["edi", "esi", "edx", "ecx"], 1) {
+  | "PARAM{i}" $VAR:v "@" $NUM:off => "mov DWORD PTR [rbp-" + off + "], {reg}"
+}
   | "STORE_GVAR" $IDENT:gname "=" /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "mov DWORD PTR [rip + _" + gname + "], eax"
   | "STORE_PTR_VAR" "_aptr" /[^=]+/:name "=" /[\s\S]+/:val
     => let val_asm = RULE("Expr", val); let off = RULE("OffOf", "_aptr" + name); val_asm \+ "mov QWORD PTR [rbp-" + off + "], rax"
   | "STORE_DEREF" /[^\n=]+/:ptr "=" /[\s\S]+/:val
     => let p_asm = RULE("Expr", ptr); let val_asm = RULE("Expr", val); p_asm \+ "push rax" \+ val_asm \+ "pop rcx" \+ "mov DWORD PTR [rcx], eax"
-  | "STORE" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "mov DWORD PTR [rbp-" + off + "], eax"
   | "CALL_DEST3" $VAR:v "@" $NUM:off " = " $IDENT:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "push rax" \+ a2 \+ "push rax" \+ a3 \+ "mov edx, eax" \+ "pop rax" \+ "mov esi, eax" \+ "pop rax" \+ "mov edi, eax" \+ "call _" + func \+ "mov DWORD PTR [rbp-" + off + "], eax"
   | "CALL_DEST2" $VAR:v "@" $NUM:off " = " $IDENT:func /[^ ]+/:v1 /[\s\S]+/:v2

@@ -1,12 +1,13 @@
-# BNFLang — SBNF compiler pipeline
+# BNFLang — 2-Stage Micro-IR Compiler Pipeline
 
 ## Pipeline
 ```
-.c  →  c-to-asm.sbnf  →  .s  →  asm-to-bin.sbnf  →  .bin
+.c  →  c-to-ir.sbnf  →  .ir  ──┬──>  ir-to-x86.sbnf    →  x86-64 .s    →  clang  →  bin
+                               └──>  ir-to-arm64.sbnf  →  ARM64 .s     →  clang  →  bin
 ```
 
 ## Engine (5 primitives)
-All in `engine/`. CLI: `python -m engine examples/c-to-asm.sbnf examples/counter.c examples/counter.s`
+All in `engine/`. CLI: `python -m engine examples/c-to-ir.sbnf examples/counter.c /tmp/counter.ir`
 
 | Primitive | Role |
 |-----------|------|
@@ -32,24 +33,19 @@ Variable offsets and label counters are embedded in the text itself and threaded
 
 ## Project structure
 - `engine/grammar.py` — grammar parser (.sbnf → rule structures)
-- `engine/matcher.py` — PEG matcher + action evaluator (117 lines)
-- `engine/__main__.py` — CLI entry point
-- `examples/c-to-asm.sbnf` — C-like → x86-64 assembly (macOS)
-- `examples/asm-to-bin.sbnf` — assembly → flat binary (partial)
-- `examples/counter.c` — test program
+- `engine/matcher.py` — PEG matcher + action evaluator
+- `engine/msbnf.py` — Meta-SBNF macro expander
+- `engine/c_prep.py` — C preprocessor & desugarer
+- `examples/c-to-ir.msbnf` — C-like → Micro-IR compiler grammar
+- `examples/ir-to-x86.msbnf` — Micro-IR → x86-64 assembly generator
+- `examples/ir-to-arm64.msbnf` — Micro-IR → ARM64 assembly generator
 - `Makefile` — build and test targets
 
 ## Testing
-- `make test` / `make test-full` — full pipeline test (counter + scope)
-- `make test-c-to-asm` — verify assembly patterns
-- `make test-counter` — run counter, verify `0\n1\n2\n3\n4\n`
-- `make test-scope` — run scope, verify `10\n0\n1\n2\n`
-- `make all` — build all programs (counter, scope)
-- `make asm` — just generate `.s` files
+- `make test` — run all 26 test programs (x86-64 & ARM64) + stack tests
 - `make clean` — remove build artifacts
 - Always use `gtimeout` when running binaries: `gtimeout 2 ./counter`
-- Install coreutils for `gtimeout`: `brew install coreutils`
-- Assembly target: x86-64 macOS. Use `clang -arch x86_64` to assemble.
+- Target architectures: x86-64 macOS (`clang -arch x86_64`) and ARM64 Apple Silicon (`clang -arch arm64`).
 - Full manual test: `make clean && make test`
 
 ## Git workflow
@@ -64,21 +60,12 @@ Variable offsets and label counters are embedded in the text itself and threaded
 ```
 counter: 0\n1\n2\n3\n4\n   — loops 0..4 with while (i < n)
 scope:   10\n0\n1\n2\n      — block-scoped variable + outer while loop
-```
-
-## Conventions
-- `.sbnf` files contain the grammar; `.c` files are test inputs
-- Target assembly syntax: GAS `.intel_syntax noprefix` with `.data`/`.text` sections
-- Variable names annotated with `@N` during declaration processing (e.g., `i@8`)
-- `print expr;` prints with newline; `printn expr;` prints without newline (trailing space); `println;` prints just a newline
-
-## Verified test outputs
-```
-counter: 0\n1\n2\n3\n4\n   — loops 0..4 with while (i < n)
-scope:   10\n0\n1\n2\n      — block-scoped variable + outer while loop
 pascal:  formatted triangle    — nested loops, *, /, (, ) operators
 pointer: 5\n4\n3\n           — & and * operators, pointer write through
 dptr:    5\n42\n             — double pointers **pp, deref chain through pp→p→n
+```
 
-
-- `Add` uses repeated Inc/Dec (O(b)). Fine for small `b` (always 4 in this codebase). For general use, replace with column addition (digit-by-digit with carry table).
+## Conventions
+- `.sbnf` / `.msbnf` files contain the grammar; `.c` files are test inputs
+- Target assembly syntax: GAS `.intel_syntax noprefix` for x86-64, Apple Silicon GAS for ARM64
+- Variable names annotated with `@N` during declaration processing (e.g., `i@8`)

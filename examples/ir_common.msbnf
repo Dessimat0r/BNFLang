@@ -1,0 +1,9 @@
+// Shared Micro-IR Tokens & Boilerplate (Meta-SBNF)
+$IDENT = /[a-zA-Z_]\w*/
+$LABEL = /[.\w]+/
+$VAR = /[^@]+/
+$NUM = /[0-9]+/
+
+Lines ::= /[^\n]+/:l "\n" /[\s\S]*/:rest => RULE("Line", l) + "\n" + RULE("Lines", rest)
+       | /[^\n]+/:l => RULE("Line", l)
+       | => ""

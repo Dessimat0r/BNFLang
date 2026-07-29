@@ -1,16 +1,12 @@
 // Micro-IR → ARM64 assembly (Apple Silicon, macOS) (Meta-SBNF)
-$IDENT = /[a-zA-Z_]\w*/
-$LABEL = /[.\w]+/
-$VAR = /[^@]+/
-$NUM = /[0-9]+/
-
 Program ::= /[\s\S]*/:src
     => ".data\nfmt: .asciz \"%d\\n\"\nfmtn: .asciz \"%d \"\nfmt_nl: .asciz \"\\n\"\nfmt_sp: .asciz \" \"\nfmt_2d: .asciz \"%d %d\\n\"\nfmt_3d: .asciz \"%d %d %d\\n\"\n.text\n"
      + RULE("Lines", src)
 
-Lines ::= /[^\n]+/:l "\n" /[\s\S]*/:rest => RULE("Line", l) + "\n" + RULE("Lines", rest)
-       | /[^\n]+/:l => RULE("Line", l)
-       | => ""
+%include "ir_common.msbnf"
+
+@def STORE_STACK(val_asm, off):
+    val_asm \+ "str w0, [x29, #-" + off + "]"
 
 Line ::= "GLOBAL" $IDENT:gname $NUM:val
     => ".data\n.globl _" + gname + "\n.p2align 2\n_" + gname + ": .word " + val + "\n.text"
@@ -20,23 +16,22 @@ Line ::= "GLOBAL" $IDENT:gname $NUM:val
   | "INIT_PTR" $VAR:v "@" $NUM:off " = &" $VAR:ref "@" $NUM:ref_off => "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + off + "]"
   | "INIT_PTR" $VAR:v "@" $NUM:off " = 0" => "str xzr, [x29, #-" + off + "]"
   | "INIT_ZERO" $VAR:v "@" $NUM:off => "str wzr, [x29, #-" + off + "]"
-  | "INIT_VAR" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "str w0, [x29, #-" + off + "]"
+  | "INIT_VAR" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
+  | "STORE" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
   | "LABEL" $LABEL:lbl => lbl + ":"
   | "JMP_Z" /[^\n,]+/:cond "," $LABEL:lbl => let c_asm = RULE("Expr", cond); c_asm \+ "cbz w0, " + lbl
   | "JMP_NZ" /[^\n,]+/:cond "," $LABEL:lbl => let c_asm = RULE("Expr", cond); c_asm \+ "cbnz w0, " + lbl
   | "JMP" $LABEL:lbl => "b " + lbl
   | "RETURN" /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "mov sp, x29" \+ "ldp x29, x30, [sp], #16" \+ "ret"
-  | "PARAM1" $VAR:v "@" $NUM:off => "str w0, [x29, #-" + off + "]"
-  | "PARAM2" $VAR:v "@" $NUM:off => "str w1, [x29, #-" + off + "]"
-  | "PARAM3" $VAR:v "@" $NUM:off => "str w2, [x29, #-" + off + "]"
-  | "PARAM4" $VAR:v "@" $NUM:off => "str w3, [x29, #-" + off + "]"
+%for i, reg in enumerate(["w0", "w1", "w2", "w3"], 1) {
+  | "PARAM{i}" $VAR:v "@" $NUM:off => "str {reg}, [x29, #-" + off + "]"
+}
   | "STORE_GVAR" $IDENT:gname "=" /[\s\S]+/:val
     => let val_asm = RULE("Expr", val); val_asm \+ "adrp x16, _" + gname + "@PAGE" \+ "add x16, x16, _" + gname + "@PAGEOFF" \+ "str w0, [x16]"
   | "STORE_PTR_VAR" "_aptr" /[^=]+/:name "=" /[\s\S]+/:val
     => let val_asm = RULE("Expr", val); let off = RULE("OffOf", "_aptr" + name); val_asm \+ "str x0, [x29, #-" + off + "]"
   | "STORE_DEREF" /[^\n=]+/:ptr "=" /[\s\S]+/:val
     => let p_asm = RULE("Expr", ptr); let val_asm = RULE("Expr", val); p_asm \+ "str w0, [sp, #-16]!" \+ val_asm \+ "ldr x1, [sp], #16" \+ "str w0, [x1]"
-  | "STORE" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => let val_asm = RULE("Expr", val); val_asm \+ "str w0, [x29, #-" + off + "]"
   | "CALL_DEST3" $VAR:v "@" $NUM:off " = " $IDENT:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "str w0, [sp, #-16]!" \+ a2 \+ "str w0, [sp, #-16]!" \+ a3 \+ "mov w2, w0" \+ "ldr w1, [sp], #16" \+ "ldr w0, [sp], #16" \+ "bl _" + func \+ "str w0, [x29, #-" + off + "]"
   | "CALL_DEST2" $VAR:v "@" $NUM:off " = " $IDENT:func /[^ ]+/:v1 /[\s\S]+/:v2
@@ -50,7 +45,7 @@ Line ::= "GLOBAL" $IDENT:gname $NUM:val
   | "CALL2" $IDENT:func /[^ ]+/:v1 /[\s\S]+/:v2
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); a1 \+ "str w0, [sp, #-16]!" \+ a2 \+ "mov w1, w0" \+ "ldr w0, [sp], #16" \+ "bl _" + func
   | "CALL1" $IDENT:func /[\s\S]+/:v1 => let a1 = RULE("Expr", v1); a1 \+ "bl _" + func
-  | "CALL0" $IDENT:func => "bl _" + func
+  | "CALL0" $IDENT:func => "call _" + func
   | "PRINT3" $IDENT:fmt /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ a3 \+ "str x0, [sp, #16]" \+ "adrp x0, " + fmt + "@PAGE" \+ "add x0, x0, " + fmt + "@PAGEOFF" \+ "bl _printf"
   | "PRINT2" $IDENT:fmt /[^ ]+/:v1 /[\s\S]+/:v2
