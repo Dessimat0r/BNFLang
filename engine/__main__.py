@@ -26,9 +26,9 @@ def main():
     # Preprocess C source files (.c)
     if input_path.endswith('.c') or input_path.endswith('.sbnfc'):
         input_text = preprocess_sbnfc(input_text)
-
-    # Escape null bytes so \x00 can be used as field separator
-    input_text = input_text.replace('\x00', '\\x00')
+    else:
+        # Escape null bytes so \x00 can be used as field separator
+        input_text = input_text.replace('\x00', '\\x00')
 
     state = {'_grammar': grammar}
     result = match_grammar(grammar, input_text, state)

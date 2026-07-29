@@ -24,7 +24,7 @@ def desugar_high_level_control_flow(src):
     - Ternary: [int] x = cond ? e1 : e2; -> if-else assignment
     - for (init; cond; incr) { body } -> init; while (cond) { body incr; }
     - else if (cond) -> else { if (cond) ... } }
-    - switch (expr) { case V1: s1; break; ... default: sN; } -> if-else chain
+    - switch (expr) { case V1: s1; break; ... default: s3; } -> if-else chain
     - do { body } while (cond); -> do_while (cond) { body }
     """
     # 0. Desugar Ternary Operator: [type] target = cond ? e1 : e2;
@@ -233,16 +233,89 @@ def desugar_high_level_control_flow(src):
 
     return src
 
+def desugar_function_calls(src, known_funcs):
+    """
+    Desugar user function calls into normalized call primitives (call0, call1, call2, call3).
+    Extracts nested function calls to temporary variables for clean stack frame preservation.
+    """
+    if not known_funcs:
+        return src
+
+    func_pattern = rf'\b({"|".join(known_funcs)})\s*\(([^()]*)\)'
+
+    lines = src.split("\n")
+    out_lines = []
+    global tmp_counter
+
+    for line in lines:
+        sline = line.strip()
+        if not sline or sline.startswith("#") or sline.startswith("//"):
+            out_lines.append(line)
+            continue
+
+        # Check if line contains user function call
+        matches = list(re.finditer(func_pattern, sline))
+        if not matches:
+            out_lines.append(line)
+            continue
+
+        # If it's a standalone assignment: [type] var = fname(args);
+        m_assign = re.match(r'^(?:(?:int|char|short|long|void)\s+\*?\s*)?([a-zA-Z_]\w*)\s*=\s*([a-zA-Z_]\w*)\s*\(([^()]*)\)\s*;$', sline)
+        if m_assign and m_assign.group(2) in known_funcs:
+            var_lhs = line[:line.find('=')].strip()
+            fname = m_assign.group(2)
+            args_str = m_assign.group(3).strip()
+            args = [a.strip() for a in args_str.split(',') if a.strip()]
+            nargs = len(args)
+            args_formatted = " ".join(args)
+            if nargs == 0:
+                out_lines.append(f"{var_lhs} = call0 {fname};")
+            else:
+                out_lines.append(f"{var_lhs} = call{nargs} {fname} {args_formatted};")
+            continue
+
+        # If it's a standalone call statement: fname(args);
+        m_stmt = re.match(r'^([a-zA-Z_]\w*)\s*\(([^()]*)\)\s*;$', sline)
+        if m_stmt and m_stmt.group(1) in known_funcs:
+            fname = m_stmt.group(1)
+            args_str = m_stmt.group(2).strip()
+            args = [a.strip() for a in args_str.split(',') if a.strip()]
+            nargs = len(args)
+            args_formatted = " ".join(args)
+            if nargs == 0:
+                out_lines.append(f"call0 {fname};")
+            else:
+                out_lines.append(f"call{nargs} {fname} {args_formatted};")
+            continue
+
+        # Otherwise: nested function calls inside expressions
+        # Extract each call to a temporary variable before the line
+        newline_expr = sline
+        for m in reversed(matches):
+            fname = m.group(1)
+            args_str = m.group(2).strip()
+            args = [a.strip() for a in args_str.split(',') if a.strip()]
+            nargs = len(args)
+            args_formatted = " ".join(args)
+
+            tmp_counter += 1
+            tmp_var = f"_fn{tmp_counter}"
+
+            if nargs == 0:
+                out_lines.append(f"int {tmp_var} = call0 {fname};")
+            else:
+                out_lines.append(f"int {tmp_var} = call{nargs} {fname} {args_formatted};")
+
+            newline_expr = newline_expr[:m.start()] + tmp_var + newline_expr[m.end():]
+
+        out_lines.append(newline_expr)
+
+    return "\n".join(out_lines)
+
 def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=None, struct_vars=None):
     """
     Preprocess C source code into normalized statements for SBNF compilation.
-    - Resolves #include <header.h> from include/ directory
-    - Resolves typedef statements
-    - Desugars struct declarations and member access (s.field -> s_field)
-    - Desugars buffer/array declarations (char buf[64] -> 64-byte stack allocation)
-    - Desugars control flow (for, do-while, else-if, switch-case)
-    - Desugars operators (compound assignment, inc/dec, logical, ternary)
-    - Normalizes multi-argument printf(...) and sprintf(...)
+    Supports user function definitions, recursive functions, and ABI register calling conventions.
     """
     if processed_includes is None:
         processed_includes = set()
@@ -253,12 +326,71 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
     if struct_vars is None:
         struct_vars = {}
 
-    # Desugar high-level control flow structures and operators first
-    src = desugar_high_level_control_flow(src)
+    # 1. First extract all top-level user function definitions
+    user_funcs = []
+    pos = 0
+    clean_src = desugar_high_level_control_flow(src)
 
-    lines = src.split("\n")
+    while True:
+        m = re.search(r'\b(int|void|char|long|short)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{', clean_src[pos:])
+        if not m:
+            break
+        ret_type = m.group(1)
+        fname = m.group(2)
+        params_raw = m.group(3).strip()
+        start_brace = pos + m.end() - 1
+        depth = 1
+        i = start_brace + 1
+        while i < len(clean_src) and depth > 0:
+            if clean_src[i] == '{': depth += 1
+            elif clean_src[i] == '}': depth -= 1
+            i += 1
+        body = clean_src[start_brace+1:i-1]
+        user_funcs.append((ret_type, fname, params_raw, body))
+        pos = i
+
+    known_func_names = [f[1] for f in user_funcs if f[1] != 'main']
+
+    # If user functions are defined, preprocess each function body
+    if len(user_funcs) > 1 or (len(user_funcs) == 1 and user_funcs[0][1] != 'main'):
+        compiled_blocks = []
+        for ret_type, fname, params_raw, body in user_funcs:
+            body_desugared = desugar_function_calls(body, known_func_names)
+
+            # Extract parameter declarations
+            params = [p.strip() for p in params_raw.split(',') if p.strip()]
+            param_decls = []
+            param_binds = []
+            for idx, p in enumerate(params):
+                p_parts = p.split()
+                p_name = p_parts[-1].lstrip('*')
+                p_type = p_parts[0] if len(p_parts) > 1 else "int"
+                param_decls.append(f"{p_type} {p_name} = 0;")
+                param_binds.append(f"{p_name} = _param{idx + 1};")
+
+            prep_body = preprocess_sbnfc(body_desugared, processed_includes, typedefs, struct_defs, struct_vars)
+            
+            # Combine params + prep_body
+            if fname == 'main':
+                compiled_blocks.append(prep_body)
+            else:
+                # Order: param_decls + prep_body decls, THEN param_binds + prep_body stmts
+                body_lines = [l for l in prep_body.split('\n') if l.strip()]
+                type_pattern = re.compile(r'^(?:long\s+long|char|short|int|long|void)\s+\*?\s*[a-zA-Z_]\w*')
+                body_decls = [l for l in body_lines if type_pattern.match(l.strip())]
+                body_stmts = [l for l in body_lines if not type_pattern.match(l.strip())]
+
+                all_decls = param_decls + body_decls
+                all_stmts = param_binds + body_stmts
+
+                compiled_blocks.append(f"FUNC _{fname}\n" + "\n".join(all_decls + all_stmts))
+
+        return "\x00".join(compiled_blocks)
+
+    # Standard single function / main compilation path
+    lines = clean_src.split("\n")
     raw_lines = []
-    has_main = 'main' in src
+    has_main = 'main' in clean_src
     in_main = False
     brace_depth = 0
     current_struct = None
@@ -268,7 +400,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         if not sline:
             continue
 
-        # 1. Handle #include <file.h> or "file.h"
+        # Handle #include <file.h> or "file.h"
         inc_m = re.match(r'^#include\s+[<"]([^>"]+)[>"]', sline)
         if inc_m:
             header_name = inc_m.group(1)
@@ -283,11 +415,10 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
                         raw_lines.extend([l for l in header_out.split("\n") if l.strip()])
             continue
 
-        # Strip preprocessor guards / directives
         if sline.startswith("#"):
             continue
 
-        # 2. Handle typedef
+        # Handle typedef
         td_m = re.match(r'^typedef\s+(.+?)\s+([a-zA-Z_]\w*)\s*;', sline)
         if td_m:
             base_type = td_m.group(1).strip()
@@ -295,11 +426,10 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             typedefs[alias] = base_type
             continue
 
-        # Apply typedef replacements
         for alias, base in typedefs.items():
             sline = re.sub(rf'\b{alias}\b', base, sline)
 
-        # Desugar buffer / array declarations: char buf[64]; -> allocate 64 bytes via dummy vars
+        # Desugar buffer declarations
         arr_m = re.match(r'^(?:char|int|short|long|int\d+_t)\s+([a-zA-Z_]\w*)\[\d+\]\s*;', sline)
         if arr_m:
             arr_var = arr_m.group(1)
@@ -308,7 +438,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             raw_lines.append(f"int {arr_var} = 0;")
             continue
 
-        # 3. Handle struct definitions: struct Point { int x; int y; };
+        # Handle struct definitions
         st_def_m = re.match(r'^struct\s+([a-zA-Z_]\w*)\s*\{', sline)
         if st_def_m:
             current_struct = st_def_m.group(1)
@@ -324,15 +454,9 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
                 struct_defs[current_struct].append(mem_m.group(1))
                 continue
 
-        # Skip function prototypes (e.g. int printf(...);)
         if re.match(r'^(?:int|void|char|long|short)\s+[a-zA-Z_]\w*\s*\([^)]*\)\s*;', sline):
             continue
 
-        # 4. Handle return statements in main
-        if sline.startswith("return"):
-            continue
-
-        # 5. Handle main function declaration / outer braces if main() exists
         if has_main:
             if re.match(r'^int\s+main\s*\([^)]*\)\s*\{?', sline):
                 in_main = True
@@ -345,7 +469,6 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
                     continue
                 brace_depth += sline.count('{') - sline.count('}')
 
-        # 6. Desugar struct instance declaration: struct Point p;
         st_inst_m = re.match(r'^struct\s+([a-zA-Z_]\w*)\s+([a-zA-Z_]\w*)\s*;', sline)
         if st_inst_m:
             st_type = st_inst_m.group(1)
@@ -356,13 +479,12 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
                     raw_lines.append(f"int {var_name}_{mem} = 0;")
             continue
 
-        # 7. Desugar struct member access (var.member -> var_member)
         for var_name, st_type in struct_vars.items():
             if st_type in struct_defs:
                 for mem in struct_defs[st_type]:
                     sline = re.sub(rf'\b{var_name}\.{mem}\b', f"{var_name}_{mem}", sline)
 
-        # 8. Normalize multi-argument printf calls:
+        # Normalize printf calls
         m3 = re.match(r'^printf\s*\(\s*"[^"]*%d[^"]*%d[^"]*%d[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
         if m3:
             v1 = get_tmp_var(m3.group(1), raw_lines)
@@ -403,7 +525,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             raw_lines.append(f"printn {m.group(1)};")
             continue
 
-        # 9. Normalize multi-argument sprintf calls:
+        # Normalize sprintf calls
         sm3 = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
         if sm3:
             buf = sm3.group(1)
