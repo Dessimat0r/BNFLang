@@ -18,12 +18,35 @@ def get_tmp_var(expr, raw_lines):
 
 def desugar_high_level_control_flow(src):
     """
-    Desugar C control flow constructs before statement normalization:
+    Desugar C control flow constructs and operator syntaxes before statement normalization:
+    - Compound assignment: x += y; -> x = x + (y);
+    - Inc/dec: x++; -> x = x + 1;
+    - Ternary: [int] x = cond ? e1 : e2; -> if-else assignment
     - for (init; cond; incr) { body } -> init; while (cond) { body incr; }
     - else if (cond) -> else { if (cond) ... } }
     - switch (expr) { case V1: s1; break; ... default: sN; } -> if-else chain
     - do { body } while (cond); -> do_while (cond) { body }
     """
+    # 0. Desugar Ternary Operator: [type] target = cond ? e1 : e2;
+    pos = 0
+    while True:
+        m = re.search(r'((?:(?:int|char|short|long)\s+)?([a-zA-Z_]\w*))\s*=\s*([^;?]+)\?\s*([^;:]+):\s*([^;]+);', src[pos:])
+        if not m:
+            break
+        start_idx = pos + m.start()
+        end_idx = pos + m.end()
+        full_lhs = m.group(1).strip()
+        target = m.group(2).strip()
+        cond = m.group(3).strip()
+        e1 = m.group(4).strip()
+        e2 = m.group(5).strip()
+
+        is_decl = full_lhs != target
+        decl_line = f"{full_lhs} = 0;\n" if is_decl else ""
+        replacement = f"\n{decl_line}if ({cond}) {{\n{target} = {e1};\n}} else {{\n{target} = {e2};\n}}\n"
+        src = src[:start_idx] + replacement + src[end_idx:]
+        pos = start_idx + len(replacement)
+
     # 1. Desugar for loops: for (init; cond; incr) { ... }
     pos = 0
     while True:
@@ -44,6 +67,12 @@ def desugar_high_level_control_flow(src):
         init = m.group(1).strip()
         cond = m.group(2).strip()
         incr = m.group(3).strip()
+
+        incr = re.sub(r'([a-zA-Z_]\w*)\s*\+\+', r'\1 = \1 + 1', incr)
+        incr = re.sub(r'\+\+\s*([a-zA-Z_]\w*)', r'\1 = \1 + 1', incr)
+        incr = re.sub(r'([a-zA-Z_]\w*)\s*--', r'\1 = \1 - 1', incr)
+        incr = re.sub(r'--\s*([a-zA-Z_]\w*)', r'\1 = \1 - 1', incr)
+
         if init and not init.endswith(';'):
             init += ';'
         if incr and not incr.endswith(';'):
@@ -79,14 +108,13 @@ def desugar_high_level_control_flow(src):
         else:
             pos = i
 
-    # 3. Desugar else if chains: wrap trailing else-if/else in nested else { ... }
+    # 3. Desugar else if chains
     pos = 0
     while True:
         m = re.search(r'\bif\s*\(\s*([^)]+)\s*\)\s*\{', src[pos:])
         if not m:
             break
         start_idx = pos + m.start()
-        # Check if this if is followed by else if
         open_brace = pos + m.end() - 1
         depth = 1
         i = open_brace + 1
@@ -97,20 +125,15 @@ def desugar_high_level_control_flow(src):
                 depth -= 1
             i += 1
         
-        # Check what follows closing brace of if
         rem = src[i:]
         elseif_m = re.match(r'^\s*else\s+if\s*\(\s*([^)]+)\s*\)\s*\{', rem)
         if elseif_m:
-            # Transform else if -> else { if ... and find end of entire if-else chain to append extra }
-            # Find end of entire chain
-            chain_depth = 0
             cur = i
             else_count = 0
             while cur < len(src):
                 m_else = re.match(r'^\s*else\s+if\s*\(\s*([^)]+)\s*\)\s*\{', src[cur:])
                 if m_else:
                     else_count += 1
-                    # Skip to closing brace of this block
                     ob = cur + m_else.end() - 1
                     d = 1
                     j = ob + 1
@@ -133,7 +156,6 @@ def desugar_high_level_control_flow(src):
                     break
                 break
             
-            # Substring to transform from i to cur
             chain_str = src[i:cur]
             chain_trans = re.sub(r'\belse\s+if\s*\(', r'else {\nif (', chain_str) + ("\n}" * else_count)
             src = src[:i] + chain_trans + src[cur:]
@@ -160,7 +182,6 @@ def desugar_high_level_control_flow(src):
         sw_expr = m.group(1).strip()
         sw_body = src[open_brace+1:i-1]
 
-        # Parse case branches
         case_blocks = re.findall(r'case\s+([^:]+):\s*(.*?)(?=case\s+|default\s*:|$)', sw_body, re.DOTALL)
         def_block = re.search(r'default\s*:\s*(.*)$', sw_body, re.DOTALL)
 
@@ -192,6 +213,24 @@ def desugar_high_level_control_flow(src):
         src = src[:start_idx] + replacement + src[i:]
         pos = start_idx + len(replacement)
 
+    # 5. Desugar Compound Assignments (+=, -=, *=, /=, %=)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*\+=\s*([^;]+);', r'\1 = \1 + (\2);', src)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*-=\s*([^;]+);', r'\1 = \1 - (\2);', src)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*\*=\s*([^;]+);', r'\1 = \1 * (\2);', src)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*/=\s*([^;]+);', r'\1 = \1 / (\2);', src)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*%=\s*([^;]+);', r'\1 = \1 % (\2);', src)
+
+    # 6. Desugar Increment / Decrement (x++; ++x; x--; --x;)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*\+\+;', r'\1 = \1 + 1;', src)
+    src = re.sub(r'\+\+\s*([a-zA-Z_]\w*);', r'\1 = \1 + 1;', src)
+    src = re.sub(r'([a-zA-Z_]\w*)\s*--;', r'\1 = \1 - 1;', src)
+    src = re.sub(r'--\s*([a-zA-Z_]\w*);', r'\1 = \1 - 1;', src)
+
+    # 7. Desugar Logical Operators (&&, ||, !)
+    src = src.replace("&&", "*")
+    src = src.replace("||", "+")
+    src = re.sub(r'(?<![a-zA-Z0-9_!=])!\s*\(([^)]+)\)', r'((\1) == 0)', src)
+
     return src
 
 def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=None, struct_vars=None):
@@ -202,6 +241,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
     - Desugars struct declarations and member access (s.field -> s_field)
     - Desugars buffer/array declarations (char buf[64] -> 64-byte stack allocation)
     - Desugars control flow (for, do-while, else-if, switch-case)
+    - Desugars operators (compound assignment, inc/dec, logical, ternary)
     - Normalizes multi-argument printf(...) and sprintf(...)
     """
     if processed_includes is None:
@@ -213,7 +253,7 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
     if struct_vars is None:
         struct_vars = {}
 
-    # Desugar high-level control flow structures first
+    # Desugar high-level control flow structures and operators first
     src = desugar_high_level_control_flow(src)
 
     lines = src.split("\n")
