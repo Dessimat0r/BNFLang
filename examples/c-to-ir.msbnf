@@ -1,8 +1,11 @@
 // C-like → Micro-IR Generator (Meta-SBNF)
-// Precedence: Bitwise > Compare > AddExpr > MulExpr > Primary
+// Transpiles C syntax into architecture-agnostic Micro-IR (.ir)
 
 $IDENT = /[a-zA-Z_]\w*/
-$DECL_HDR = $NUM:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/
+$NUM = /[0-9]+/
+$DECL_STATE = /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00"
+$DECL_HDR = /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/
+$STMT_STATE = /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00"
 
 Program ::= /[\s\S]*/:src => RULE("FuncList", src)
 
@@ -16,9 +19,9 @@ OneFunc ::= "GLOBAL " $IDENT:gname $NUM:val
   | /[\s\S]*/:body
     => "FUNC _main\n" + RULE("Decls", "4\x00\x00" + body)
 
-// ── Declaration phase ─────────────────────────────────────────────────────
+// ── Declaration Phase ────────────────────────────────────────────────────
 
-Decls ::= $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
+Decls ::= $DECL_STATE /[\s\S]*/:c => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
 TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => DECL(v, n, i, c, "INIT_PTR " + v + "@" + n + " = &" + ref + "\n")
@@ -29,7 +32,7 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
     => let code = RULE("DeclZeroCode", v + "\x00" + n); DECL(v, n, i, c, code)
   | $DECL_HDR $IDENT:v "=" /[^;\x00]+/:val ";" "\n" /[\s\S]*/:c
     => let val_ir = RULE("Expr", val); DECL(v, n, i, c, "INIT_VAR " + v + "@" + n + " = " + val_ir + "\n")
-  | $NUM:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c
+  | $DECL_STATE /[\s\S]*/:c
     => "FRAME " + RULE("Ceil16", n + "32") + "\n"
      + i
      + RULE("Stmts", "10\x00none\x00none\x00" + c)
@@ -38,43 +41,47 @@ TryDecl ::= $DECL_HDR /\*+/ $IDENT:v "=" "&" $VAR:ref ";" "\n" /[\s\S]*/:c
 DeclZeroCode ::= "buf_pad" /[\s\S]*/ => ""
                | $IDENT:v "\x00" $NUM:n => "INIT_ZERO " + v + "@" + n + "\n"
 
-// ── Statement phase ──────────────────────────────────────────────────────
+// ── Statement Phase ──────────────────────────────────────────────────────
 
-Stmts ::= $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + code)
+Stmts ::= $STMT_STATE /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + code)
 
-S ::= $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
+S ::= $STMT_STATE "while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "while" "(" $PAREN:cond ")" "{" BlockBody:body "}"
+  | $STMT_STATE "while" "(" $PAREN:cond ")" "{" BlockBody:body "}"
     => RULE("GenWhile", lc + "\x00" + cond + "\x00" + body)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
+  | $STMT_STATE "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}"
+  | $STMT_STATE "do_while" "(" $PAREN:cond ")" "{" BlockBody:body "}"
     => RULE("GenDoWhile", lc + "\x00" + cond + "\x00" + body)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
+  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}" /[\s\S]*/:rest
     => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}"
+  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:b1 "}" "else" "{" BlockBody:b2 "}"
     => RULE("GenIfElse", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + b1 + "\x00" + b2)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
+  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:body "}" /[\s\S]*/:rest
     => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + cond + "\x00" + body) + "\n" + RULE("S", (lc + "5") + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "if" "(" $PAREN:cond ")" "{" BlockBody:body "}"
+  | $STMT_STATE "if" "(" $PAREN:cond ")" "{" BlockBody:body "}"
     => RULE("GenIf", lc + "\x00" + cl + "\x00" + bl + "\x00" + body)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:first "\n" /[\s\S]*/:rest
+  | $STMT_STATE Stmt:first "\n" /[\s\S]*/:rest
     => RULE("GenStmt", cl + "\x00" + bl + "\x00" + first) + "\n" + RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + rest)
-  | $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"
+  | $STMT_STATE Stmt:last => RULE("GenStmt", cl + "\x00" + bl + "\x00" + last) + "\n"
   | => ""
 
 GenStmt ::= /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "break;" => "JMP .L" + bl
           | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "continue;" => "JMP .L" + cl
           | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:s => s
 
+// ── C Statements Translation ─────────────────────────────────────────────
+
 Stmt ::=
     "return" /[^;]+/:val ";" => "RETURN " + RULE("Expr", val)
   | "G_" $IDENT:gname "=" /[^;]+/:val ";"
     => let val_ir = RULE("Expr", val); "STORE_GVAR G_" + gname + " = " + val_ir
+  // Function parameters
   | Var:v "=" "_param1;" => "PARAM1 " + v
   | Var:v "=" "_param2;" => "PARAM2 " + v
   | Var:v "=" "_param3;" => "PARAM3 " + v
   | Var:v "=" "_param4;" => "PARAM4 " + v
+  // Function calls (assigned)
   | Var:dest "=" "call3" $IDENT:func Var:v1 Var:v2 Var:v3 ";"
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "CALL_DEST3 " + dest + " = " + func + " " + a1 + " " + a2 + " " + a3
   | Var:dest "=" "call2" $IDENT:func Var:v1 Var:v2 ";"
@@ -83,6 +90,7 @@ Stmt ::=
     => let a1 = RULE("Expr", v1); "CALL_DEST1 " + dest + " = " + func + " " + a1
   | Var:dest "=" "call0" $IDENT:func ";"
     => "CALL_DEST0 " + dest + " = " + func
+  // Function calls (void)
   | "call3" $IDENT:func Var:v1 Var:v2 Var:v3 ";"
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "CALL3 " + func + " " + a1 + " " + a2 + " " + a3
   | "call2" $IDENT:func Var:v1 Var:v2 ";"
@@ -90,6 +98,7 @@ Stmt ::=
   | "call1" $IDENT:func /[^)\x00\s]+/:v1
     => let a1 = RULE("Expr", v1); "CALL1 " + func + " " + a1
   | "call0" $IDENT:func ";" => "CALL0 " + func
+  // Standard I/O / Print helpers
   | "print3" Var:v1 Var:v2 Var:v3 ";"
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "PRINT3 fmt_3d " + a1 + " " + a2 + " " + a3
   | "print2" Var:v1 Var:v2 ";"
@@ -106,6 +115,7 @@ Stmt ::=
 %for kw, fmt in [("printn", "fmtn"), ("print", "fmt")] {
   | "{kw}" /[^;]+/:val ";" => let val_ir = RULE("Expr", val); "PRINT1 {fmt} " + val_ir
 }
+  // Pointers & Assignments
   | "_aptr" /[^=]+/:name "=" /[^;]+/:val ";"
     => let val_ir = RULE("Expr", val); "STORE_PTR_VAR _aptr" + name + " = " + val_ir
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
@@ -115,7 +125,7 @@ Stmt ::=
 
 OffOf ::= $VAR_OFF /[\s\S]*/ => off | $IDENT:name /[\s\S]*/ => name
 
-// ── Loops and conditionals ───────────────────────────────────────────────
+// ── Loops & Control Flow IR Emission ──────────────────────────────────────
 
 BlockBody ::= /[^{}]+/:text BlockBody:rest => text + rest | "{" BlockBody:inner "}" BlockBody:rest => "{" + inner + "}" + rest | => ""
 
@@ -131,7 +141,7 @@ GenIf ::= $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[^\x00]+/:co
 GenIfElse ::= $NUM:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[^\x00]+/:cond "\x00" /[^\x00]*/:b1 "\x00" /[\s\S]*/:b2
     => "JMP_Z " + RULE("Expr", cond) + ", .L" + lc + "\n" + RULE("Stmts", (lc + "2") + "\x00" + cl + "\x00" + bl + "\x00" + b1) + "JMP .L" + (lc + "1") + "\nLABEL .L" + lc + "\n" + RULE("Stmts", (lc + "3") + "\x00" + cl + "\x00" + bl + "\x00" + b2) + "LABEL .L" + (lc + "1")
 
-// ── Expression rules ─────────────────────────────────────────────────────
+// ── Expressions ──────────────────────────────────────────────────────────
 
 Num ::= $NUM:n /[\s]*/ => n
 Var ::= $VAR:v /[\s]*/ => v

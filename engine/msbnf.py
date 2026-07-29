@@ -118,7 +118,7 @@ def extract_custom_aliases(text):
     lines = text.split("\n")
     clean_lines = []
     for line in lines:
-        m = re.match(r'^\$(\w+)\s*=\s*(/.+/|\"[^\"]+\")\s*$', line.strip())
+        m = re.match(r'^\$(\w+)\s*=\s*(.+)$', line.strip())
         if m:
             aliases[f"${m.group(1)}"] = m.group(2)
         else:

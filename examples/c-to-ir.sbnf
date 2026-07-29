@@ -1,7 +1,6 @@
 // C-like → Micro-IR Generator (Meta-SBNF)
-// Precedence: Bitwise > Compare > AddExpr > MulExpr > Primary
+// Transpiles C syntax into architecture-agnostic Micro-IR (.ir)
 
-/[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/ = /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/
 
 Program ::= /[\s\S]*/:src => RULE("FuncList", src)
 
@@ -15,7 +14,7 @@ OneFunc ::= "GLOBAL " /[a-zA-Z_]\w*/:gname /[0-9]+/:val
   | /[\s\S]*/:body
     => "FUNC _main\n" + RULE("Decls", "4\x00\x00" + body)
 
-// ── Declaration phase ─────────────────────────────────────────────────────
+// ── Declaration Phase ────────────────────────────────────────────────────
 
 Decls ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /[\s\S]*/:c => RULE("TryDecl", n + "\x00" + i + "\x00" + c)
 
@@ -37,7 +36,7 @@ TryDecl ::= /[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int
 DeclZeroCode ::= "buf_pad" /[\s\S]*/ => ""
                | /[a-zA-Z_]\w*/:v "\x00" /[0-9]+/:n => "INIT_ZERO " + v + "@" + n + "\n"
 
-// ── Statement phase ──────────────────────────────────────────────────────
+// ── Statement Phase ──────────────────────────────────────────────────────
 
 Stmts ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:code => RULE("S", lc + "\x00" + cl + "\x00" + bl + "\x00" + code)
 
@@ -66,14 +65,18 @@ GenStmt ::= /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "break;" => "JMP .L" + bl
           | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" "continue;" => "JMP .L" + cl
           | /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[\s\S]*/:s => s
 
+// ── C Statements Translation ─────────────────────────────────────────────
+
 Stmt ::=
     "return" /[^;]+/:val ";" => "RETURN " + RULE("Expr", val)
   | "G_" /[a-zA-Z_]\w*/:gname "=" /[^;]+/:val ";"
     => LET(val_ir, RULE("Expr", val), "STORE_GVAR G_" + gname + " = " + val_ir)
+  // Function parameters
   | Var:v "=" "_param1;" => "PARAM1 " + v
   | Var:v "=" "_param2;" => "PARAM2 " + v
   | Var:v "=" "_param3;" => "PARAM3 " + v
   | Var:v "=" "_param4;" => "PARAM4 " + v
+  // Function calls (assigned)
   | Var:dest "=" "call3" /[a-zA-Z_]\w*/:func Var:v1 Var:v2 Var:v3 ";"
     => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), "CALL_DEST3 " + dest + " = " + func + " " + a1 + " " + a2 + " " + a3)))
   | Var:dest "=" "call2" /[a-zA-Z_]\w*/:func Var:v1 Var:v2 ";"
@@ -82,6 +85,7 @@ Stmt ::=
     => LET(a1, RULE("Expr", v1), "CALL_DEST1 " + dest + " = " + func + " " + a1)
   | Var:dest "=" "call0" /[a-zA-Z_]\w*/:func ";"
     => "CALL_DEST0 " + dest + " = " + func
+  // Function calls (void)
   | "call3" /[a-zA-Z_]\w*/:func Var:v1 Var:v2 Var:v3 ";"
     => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), "CALL3 " + func + " " + a1 + " " + a2 + " " + a3)))
   | "call2" /[a-zA-Z_]\w*/:func Var:v1 Var:v2 ";"
@@ -89,6 +93,7 @@ Stmt ::=
   | "call1" /[a-zA-Z_]\w*/:func /[^)\x00\s]+/:v1
     => LET(a1, RULE("Expr", v1), "CALL1 " + func + " " + a1)
   | "call0" /[a-zA-Z_]\w*/:func ";" => "CALL0 " + func
+  // Standard I/O / Print helpers
   | "print3" Var:v1 Var:v2 Var:v3 ";"
     => LET(a1, RULE("Expr", v1), LET(a2, RULE("Expr", v2), LET(a3, RULE("Expr", v3), "PRINT3 fmt_3d " + a1 + " " + a2 + " " + a3)))
   | "print2" Var:v1 Var:v2 ";"
@@ -103,6 +108,7 @@ Stmt ::=
   | "printsp" ";" => "PRINT0 fmt_sp"
   | "printn" /[^;]+/:val ";" => LET(val_ir, RULE("Expr", val), "PRINT1 fmtn " + val_ir)
   | "print" /[^;]+/:val ";" => LET(val_ir, RULE("Expr", val), "PRINT1 fmt " + val_ir)
+  // Pointers & Assignments
   | "_aptr" /[^=]+/:name "=" /[^;]+/:val ";"
     => LET(val_ir, RULE("Expr", val), "STORE_PTR_VAR _aptr" + name + " = " + val_ir)
   | "*" PtrChain:ptr "=" /[^;]+/:val ";"
@@ -112,7 +118,7 @@ Stmt ::=
 
 OffOf ::= /[^@]+/:name "@" /[0-9]+/:off /[\s\S]*/ => off | /[a-zA-Z_]\w*/:name /[\s\S]*/ => name
 
-// ── Loops and conditionals ───────────────────────────────────────────────
+// ── Loops & Control Flow IR Emission ──────────────────────────────────────
 
 BlockBody ::= /[^{}]+/:text BlockBody:rest => text + rest | "{" BlockBody:inner "}" BlockBody:rest => "{" + inner + "}" + rest | => ""
 
@@ -128,7 +134,7 @@ GenIf ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[^\x00]+
 GenIfElse ::= /[0-9]+/:lc "\x00" /[^\x00]*/:cl "\x00" /[^\x00]*/:bl "\x00" /[^\x00]+/:cond "\x00" /[^\x00]*/:b1 "\x00" /[\s\S]*/:b2
     => "JMP_Z " + RULE("Expr", cond) + ", .L" + lc + "\n" + RULE("Stmts", (lc + "2") + "\x00" + cl + "\x00" + bl + "\x00" + b1) + "JMP .L" + (lc + "1") + "\nLABEL .L" + lc + "\n" + RULE("Stmts", (lc + "3") + "\x00" + cl + "\x00" + bl + "\x00" + b2) + "LABEL .L" + (lc + "1")
 
-// ── Expression rules ─────────────────────────────────────────────────────
+// ── Expressions ──────────────────────────────────────────────────────────
 
 Num ::= /[0-9]+/:n /[\s]*/ => n
 Var ::= /[a-zA-Z_@0-9]+/:v /[\s]*/ => v
