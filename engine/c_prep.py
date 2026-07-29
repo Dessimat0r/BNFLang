@@ -5,6 +5,7 @@ import re
 INCLUDE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "include")
 
 tmp_counter = 0
+aptr_cnt = 0
 
 def get_tmp_var(expr, raw_lines):
     global tmp_counter
@@ -18,7 +19,8 @@ def get_tmp_var(expr, raw_lines):
 
 def desugar_high_level_control_flow(src):
     """
-    Desugar C control flow constructs and operator syntaxes before statement normalization:
+    Desugar C control flow constructs, array subscripting, and operator syntaxes:
+    - Array Subscripting: arr[i] -> int *_aptrN = &arr + (i) * 8; *_aptrN
     - Compound assignment: x += y; -> x = x + (y);
     - Inc/dec: x++; -> x = x + 1;
     - Ternary: [int] x = cond ? e1 : e2; -> if-else assignment
@@ -27,7 +29,32 @@ def desugar_high_level_control_flow(src):
     - switch (expr) { case V1: s1; break; ... default: s3; } -> if-else chain
     - do { body } while (cond); -> do_while (cond) { body }
     """
-    # 0. Desugar Ternary Operator: [type] target = cond ? e1 : e2;
+    global aptr_cnt
+    type_decl_pattern = re.compile(r'^(?:int|char|short|long|void)\s+[a-zA-Z_]\w*\[\d+\]\s*;')
+    lines = src.split('\n')
+    out_lines = []
+    for line in lines:
+        sline = line.strip()
+        if type_decl_pattern.match(sline):
+            out_lines.append(line)
+        else:
+            matches = list(re.finditer(r'\b([a-zA-Z_]\w*)\s*\[\s*([^\[\]]+)\s*\]', sline))
+            if not matches:
+                out_lines.append(line)
+                continue
+            
+            newline = sline
+            for m in reversed(matches):
+                arr_var = m.group(1)
+                idx_expr = m.group(2).strip()
+                aptr_cnt += 1
+                aptr_name = f"_aptr{aptr_cnt}"
+                out_lines.append(f"int *{aptr_name} = &{arr_var} + ({idx_expr}) * 8;")
+                newline = newline[:m.start()] + f"*{aptr_name}" + newline[m.end():]
+            out_lines.append(newline)
+    src = '\n'.join(out_lines)
+
+    # 1. Desugar Ternary Operator: [type] target = cond ? e1 : e2;
     pos = 0
     while True:
         m = re.search(r'((?:(?:int|char|short|long)\s+)?([a-zA-Z_]\w*))\s*=\s*([^;?]+)\?\s*([^;:]+):\s*([^;]+);', src[pos:])
@@ -47,7 +74,7 @@ def desugar_high_level_control_flow(src):
         src = src[:start_idx] + replacement + src[end_idx:]
         pos = start_idx + len(replacement)
 
-    # 1. Desugar for loops: for (init; cond; incr) { ... }
+    # 2. Desugar for loops: for (init; cond; incr) { ... }
     pos = 0
     while True:
         m = re.search(r'\bfor\s*\(\s*([^;]*);\s*([^;]*);\s*([^)]*)\)\s*\{', src[pos:])
@@ -81,7 +108,7 @@ def desugar_high_level_control_flow(src):
         src = src[:start_idx] + replacement + src[i:]
         pos = start_idx + len(replacement)
 
-    # 2. Desugar do { body } while (cond);
+    # 3. Desugar do { body } while (cond);
     pos = 0
     while True:
         m = re.search(r'\bdo\s*\{', src[pos:])
@@ -108,7 +135,7 @@ def desugar_high_level_control_flow(src):
         else:
             pos = i
 
-    # 3. Desugar else if chains
+    # 4. Desugar else if chains
     pos = 0
     while True:
         m = re.search(r'\bif\s*\(\s*([^)]+)\s*\)\s*\{', src[pos:])
@@ -163,7 +190,7 @@ def desugar_high_level_control_flow(src):
         else:
             pos = i
 
-    # 4. Desugar switch (expr) { case V1: s1; break; case V2: s2; break; default: s3; }
+    # 5. Desugar switch (expr) { case V1: s1; break; case V2: s2; break; default: s3; }
     pos = 0
     while True:
         m = re.search(r'\bswitch\s*\(\s*([^)]+)\s*\)\s*\{', src[pos:])
@@ -213,20 +240,20 @@ def desugar_high_level_control_flow(src):
         src = src[:start_idx] + replacement + src[i:]
         pos = start_idx + len(replacement)
 
-    # 5. Desugar Compound Assignments (+=, -=, *=, /=, %=)
+    # 6. Desugar Compound Assignments (+=, -=, *=, /=, %=)
     src = re.sub(r'([a-zA-Z_]\w*)\s*\+=\s*([^;]+);', r'\1 = \1 + (\2);', src)
     src = re.sub(r'([a-zA-Z_]\w*)\s*-=\s*([^;]+);', r'\1 = \1 - (\2);', src)
     src = re.sub(r'([a-zA-Z_]\w*)\s*\*=\s*([^;]+);', r'\1 = \1 * (\2);', src)
     src = re.sub(r'([a-zA-Z_]\w*)\s*/=\s*([^;]+);', r'\1 = \1 / (\2);', src)
     src = re.sub(r'([a-zA-Z_]\w*)\s*%=\s*([^;]+);', r'\1 = \1 % (\2);', src)
 
-    # 6. Desugar Increment / Decrement (x++; ++x; x--; --x;)
+    # 7. Desugar Increment / Decrement (x++; ++x; x--; --x;)
     src = re.sub(r'([a-zA-Z_]\w*)\s*\+\+;', r'\1 = \1 + 1;', src)
     src = re.sub(r'\+\+\s*([a-zA-Z_]\w*);', r'\1 = \1 + 1;', src)
     src = re.sub(r'([a-zA-Z_]\w*)\s*--;', r'\1 = \1 - 1;', src)
     src = re.sub(r'--\s*([a-zA-Z_]\w*);', r'\1 = \1 - 1;', src)
 
-    # 7. Desugar Logical Operators (&&, ||, !)
+    # 8. Desugar Logical Operators (&&, ||, !)
     src = src.replace("&&", "*")
     src = src.replace("||", "+")
     src = re.sub(r'(?<![a-zA-Z0-9_!=])!\s*\(([^)]+)\)', r'((\1) == 0)', src)
@@ -315,8 +342,10 @@ def desugar_function_calls(src, known_funcs):
 def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=None, struct_vars=None):
     """
     Preprocess C source code into normalized statements for SBNF compilation.
-    Supports user function definitions, recursive functions, and ABI register calling conventions.
+    Supports user function definitions, recursive functions, ABI register calling conventions,
+    global variables, and static local variables.
     """
+    is_root = (processed_includes is None)
     if processed_includes is None:
         processed_includes = set()
     if typedefs is None:
@@ -326,11 +355,42 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
     if struct_vars is None:
         struct_vars = {}
 
-    # 1. First extract all top-level user function definitions
-    user_funcs = []
-    pos = 0
     clean_src = desugar_high_level_control_flow(src)
 
+    # Extract global variables outside function bodies (root level only)
+    global_vars = {}
+    global_decls_sbnf = []
+
+    if is_root:
+        g_decl_pattern = re.compile(r'^(?:int|char|short|long|void)\s+([a-zA-Z_]\w*)\s*(?:=\s*(.+?))?\s*;$', re.MULTILINE)
+        
+        func_spans = []
+        pos = 0
+        while True:
+            m = re.search(r'\b(int|void|char|long|short)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{', clean_src[pos:])
+            if not m:
+                break
+            start_brace = pos + m.end() - 1
+            depth = 1
+            i = start_brace + 1
+            while i < len(clean_src) and depth > 0:
+                if clean_src[i] == '{': depth += 1
+                elif clean_src[i] == '}': depth -= 1
+                i += 1
+            func_spans.append((pos + m.start(), i))
+            pos = i
+
+        for m in g_decl_pattern.finditer(clean_src):
+            m_start = m.start()
+            if not any(fstart <= m_start < fend for fstart, fend in func_spans):
+                gname = m.group(1)
+                gval = m.group(2).strip() if m.group(2) else "0"
+                global_vars[gname] = gval
+                global_decls_sbnf.append(f"GLOBAL G_{gname} {gval}")
+
+    # Extract all top-level user function definitions
+    user_funcs = []
+    pos = 0
     while True:
         m = re.search(r'\b(int|void|char|long|short)\s+([a-zA-Z_]\w*)\s*\(([^)]*)\)\s*\{', clean_src[pos:])
         if not m:
@@ -346,6 +406,21 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             elif clean_src[i] == '}': depth -= 1
             i += 1
         body = clean_src[start_brace+1:i-1]
+
+        # Extract static local variables inside this function
+        static_m = re.findall(r'\bstatic\s+(?:int|char|short|long|void)\s+([a-zA-Z_]\w*)\s*(?:=\s*(.+?))?\s*;', body)
+        for sname, sval in static_m:
+            sval = sval.strip() if sval else "0"
+            mangled_gname = f"static_{fname}_{sname}"
+            global_decls_sbnf.append(f"GLOBAL G_{mangled_gname} {sval}")
+            body = re.sub(rf'\bstatic\s+(?:int|char|short|long|void)\s+{sname}\s*(?:=\s*.+?)?\s*;', '', body)
+            body = re.sub(rf'(?<!G_)\b{sname}\b', f"G_{mangled_gname}", body)
+
+        # Replace global variable references in body with G_ prefix
+        for gname in global_vars:
+            if not gname.startswith("static_"):
+                body = re.sub(rf'(?<!G_)\b{gname}\b', f"G_{gname}", body)
+
         user_funcs.append((ret_type, fname, params_raw, body))
         pos = i
 
@@ -353,11 +428,10 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
 
     # If user functions are defined, preprocess each function body
     if len(user_funcs) > 1 or (len(user_funcs) == 1 and user_funcs[0][1] != 'main'):
-        compiled_blocks = []
+        compiled_blocks = list(global_decls_sbnf)
         for ret_type, fname, params_raw, body in user_funcs:
             body_desugared = desugar_function_calls(body, known_func_names)
 
-            # Extract parameter declarations
             params = [p.strip() for p in params_raw.split(',') if p.strip()]
             param_decls = []
             param_binds = []
@@ -370,11 +444,9 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
 
             prep_body = preprocess_sbnfc(body_desugared, processed_includes, typedefs, struct_defs, struct_vars)
             
-            # Combine params + prep_body
             if fname == 'main':
                 compiled_blocks.append(prep_body)
             else:
-                # Order: param_decls + prep_body decls, THEN param_binds + prep_body stmts
                 body_lines = [l for l in prep_body.split('\n') if l.strip()]
                 type_pattern = re.compile(r'^(?:long\s+long|char|short|int|long|void)\s+\*?\s*[a-zA-Z_]\w*')
                 body_decls = [l for l in body_lines if type_pattern.match(l.strip())]
@@ -430,10 +502,13 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             sline = re.sub(rf'\b{alias}\b', base, sline)
 
         # Desugar buffer declarations
-        arr_m = re.match(r'^(?:char|int|short|long|int\d+_t)\s+([a-zA-Z_]\w*)\[\d+\]\s*;', sline)
+        arr_m = re.match(r'^(char|int|short|long|int\d+_t)\s+([a-zA-Z_]\w*)\[(\d+)\]\s*;', sline)
         if arr_m:
-            arr_var = arr_m.group(1)
-            for k in range(7):
+            elem_type = arr_m.group(1)
+            arr_var = arr_m.group(2)
+            arr_size = int(arr_m.group(3))
+            num_slots = (arr_size + 7) // 8 if elem_type == 'char' else arr_size
+            for k in range(num_slots):
                 raw_lines.append(f"int {arr_var}_pad{k} = 0;")
             raw_lines.append(f"int {arr_var} = 0;")
             continue
@@ -561,8 +636,8 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             decl_m = re.match(r'^((?:long\s+long|char|short|int|long|void)\s+\*?\s*[a-zA-Z_]\w*)\s*=\s*(.+);$', l.strip())
             if decl_m:
                 var_decl = decl_m.group(1)
-                expr_val = decl_m.group(2)
-                if re.match(r'^\d+$', expr_val) or expr_val.startswith('&'):
+                expr_val = decl_m.group(2).strip()
+                if (re.match(r'^\d+$', expr_val) or (expr_val.startswith('&') and ' ' not in expr_val and '+' not in expr_val)):
                     decls.append(l)
                 else:
                     var_name = var_decl.split()[-1].lstrip('*')
@@ -573,7 +648,10 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
         else:
             stmts.append(l)
 
-    return "\n".join(decls + stmts)
+    res = "\n".join(decls + stmts)
+    if is_root and global_decls_sbnf:
+        res = "\x00".join(global_decls_sbnf) + "\x00" + res
+    return res
 
 def main():
     if len(sys.argv) < 3:

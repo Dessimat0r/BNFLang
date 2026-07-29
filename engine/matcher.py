@@ -1,5 +1,8 @@
+import sys
 import re
 from .grammar import Pattern
+
+sys.setrecursionlimit(50000)
 
 CATCHALL_RE = re.compile(r'^\[\\s\\S\][*+]$')
 

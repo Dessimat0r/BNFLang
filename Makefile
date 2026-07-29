@@ -4,7 +4,7 @@ GTIMEOUT := $(shell command -v gtimeout 2>/dev/null || echo "gtimeout")
 
 # ── Programs (x86-64) ───────────────────────────────────────────────────────
 
-PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/multi_sprintf examples/test_control_flow examples/test_operators examples/test_functions
+PROGRAMS := examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/multi_sprintf examples/test_control_flow examples/test_operators examples/test_functions examples/test_globals_arrays
 
 # Compile .msbnf → .sbnf
 examples/c-to-asm.sbnf: examples/c-to-asm.msbnf
@@ -47,8 +47,11 @@ examples/test_operators.s: examples/c-to-asm.sbnf examples/test_operators.c
 examples/test_functions.s: examples/c-to-asm.sbnf examples/test_functions.c
 	python -m engine examples/c-to-asm.sbnf examples/test_functions.c examples/test_functions.s
 
+examples/test_globals_arrays.s: examples/c-to-asm.sbnf examples/test_globals_arrays.c
+	python -m engine examples/c-to-asm.sbnf examples/test_globals_arrays.c examples/test_globals_arrays.s
+
 # Assemble .s → executable for x86-64
-examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/multi_sprintf examples/test_control_flow examples/test_operators examples/test_functions:
+examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/multi_sprintf examples/test_control_flow examples/test_operators examples/test_functions examples/test_globals_arrays:
 	clang -arch x86_64 -c $(filter %.s,$^) -o $(@:.o=).o && \
 	clang -arch x86_64 $(@:.o=).o -o $@ -lSystem
 
@@ -63,10 +66,11 @@ examples/multi_sprintf: examples/multi_sprintf.s
 examples/test_control_flow: examples/test_control_flow.s
 examples/test_operators: examples/test_operators.s
 examples/test_functions: examples/test_functions.s
+examples/test_globals_arrays: examples/test_globals_arrays.s
 
 # ── Programs (ARM64) ────────────────────────────────────────────────────────
 
-ARM64_PROGRAMS := examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64 examples/datatypes-arm64 examples/multi_sprintf-arm64 examples/test_control_flow-arm64 examples/test_operators-arm64 examples/test_functions-arm64
+ARM64_PROGRAMS := examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64 examples/datatypes-arm64 examples/multi_sprintf-arm64 examples/test_control_flow-arm64 examples/test_operators-arm64 examples/test_functions-arm64 examples/test_globals_arrays-arm64
 
 examples/counter-arm64.s: examples/c-to-asm-arm64.sbnf examples/counter.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/counter.c examples/counter-arm64.s
@@ -101,7 +105,10 @@ examples/test_operators-arm64.s: examples/c-to-asm-arm64.sbnf examples/test_oper
 examples/test_functions-arm64.s: examples/c-to-asm-arm64.sbnf examples/test_functions.c
 	python -m engine examples/c-to-asm-arm64.sbnf examples/test_functions.c examples/test_functions-arm64.s
 
-examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64 examples/datatypes-arm64 examples/multi_sprintf-arm64 examples/test_control_flow-arm64 examples/test_operators-arm64 examples/test_functions-arm64:
+examples/test_globals_arrays-arm64.s: examples/c-to-asm-arm64.sbnf examples/test_globals_arrays.c
+	python -m engine examples/c-to-asm-arm64.sbnf examples/test_globals_arrays.c examples/test_globals_arrays-arm64.s
+
+examples/counter-arm64 examples/scope-arm64 examples/pascal-arm64 examples/pointer-arm64 examples/dptr-arm64 examples/sprintf-arm64 examples/datatypes-arm64 examples/multi_sprintf-arm64 examples/test_control_flow-arm64 examples/test_operators-arm64 examples/test_functions-arm64 examples/test_globals_arrays-arm64:
 	clang -arch arm64 -c $(filter %.s,$^) -o $(@:.o=).o && \
 	clang -arch arm64 $(@:.o=).o -o $@ -lSystem
 
@@ -116,6 +123,7 @@ examples/multi_sprintf-arm64: examples/multi_sprintf-arm64.s
 examples/test_control_flow-arm64: examples/test_control_flow-arm64.s
 examples/test_operators-arm64: examples/test_operators-arm64.s
 examples/test_functions-arm64: examples/test_functions-arm64.s
+examples/test_globals_arrays-arm64: examples/test_globals_arrays-arm64.s
 
 # ── Targets ─────────────────────────────────────────────────────────────────
 
@@ -123,12 +131,12 @@ all: $(PROGRAMS)
 
 all-arm64: $(ARM64_PROGRAMS)
 
-asm: examples/counter.s examples/scope.s examples/pascal.s examples/sprintf.s examples/datatypes.s examples/multi_sprintf.s examples/test_control_flow.s examples/test_operators.s examples/test_functions.s
+asm: examples/counter.s examples/scope.s examples/pascal.s examples/sprintf.s examples/datatypes.s examples/multi_sprintf.s examples/test_control_flow.s examples/test_operators.s examples/test_functions.s examples/test_globals_arrays.s
 
 asm-arm64: $(ARM64_PROGRAMS:%=%.s)
 
 clean:
-	rm -f examples/*.s examples/*.bin examples/*.o examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/multi_sprintf examples/test_control_flow examples/test_operators examples/test_functions examples/*-arm64
+	rm -f examples/*.s examples/*.bin examples/*.o examples/counter examples/scope examples/pascal examples/pointer examples/dptr examples/sprintf examples/datatypes examples/multi_sprintf examples/test_control_flow examples/test_operators examples/test_functions examples/test_globals_arrays examples/*-arm64
 
 # ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -205,6 +213,12 @@ test-functions: examples/test_functions
 	printf "42\n52\n8\n21\n" > /tmp/functions-expected.txt; \
 	diff /tmp/functions-out.txt /tmp/functions-expected.txt && echo "PASS" || echo "FAIL"
 
+test-globals_arrays: examples/test_globals_arrays
+	@echo "=== test_globals_arrays: run ==="
+	$(GTIMEOUT) 2 ./examples/test_globals_arrays > /tmp/globals_arrays-out.txt 2>&1; \
+	printf "50\n75\n10\n20\n30\n40\n50\n150\n1\n2\n3\n" > /tmp/globals_arrays-expected.txt; \
+	diff /tmp/globals_arrays-out.txt /tmp/globals_arrays-expected.txt && echo "PASS" || echo "FAIL"
+
 # ── ARM64 Tests ──────────────────────────────────────────────────────────────
 
 test-arm64-counter: examples/counter-arm64
@@ -246,8 +260,8 @@ test-arm64-sprintf: examples/sprintf-arm64
 test-arm64-datatypes: examples/datatypes-arm64
 	@echo "=== arm64 datatypes ==="
 	$(GTIMEOUT) 2 ./examples/datatypes-arm64 > /tmp/arm64-datatypes-out.txt 2>&1; \
-	printf "42\n" > /tmp/arm64-datatypes-expected.txt; \
-	diff /tmp/arm64-datatypes-out.txt /tmp/arm64-datatypes-expected.txt && echo "PASS" || echo "FAIL"
+	printf "42\n" > /tmp/datatypes-expected.txt; \
+	diff /tmp/arm64-datatypes-out.txt /tmp/datatypes-expected.txt && echo "PASS" || echo "FAIL"
 
 test-arm64-multi_sprintf: examples/multi_sprintf-arm64
 	@echo "=== arm64 multi_sprintf ==="
@@ -273,14 +287,20 @@ test-arm64-functions: examples/test_functions-arm64
 	printf "42\n52\n8\n21\n" > /tmp/functions-expected.txt; \
 	diff /tmp/arm64-functions-out.txt /tmp/functions-expected.txt && echo "PASS" || echo "FAIL"
 
-test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr test-arm64-sprintf test-arm64-datatypes test-arm64-multi_sprintf test-arm64-control_flow test-arm64-operators test-arm64-functions
+test-arm64-globals_arrays: examples/test_globals_arrays-arm64
+	@echo "=== arm64 test_globals_arrays ==="
+	$(GTIMEOUT) 2 ./examples/test_globals_arrays-arm64 > /tmp/arm64-globals_arrays-out.txt 2>&1; \
+	printf "50\n75\n10\n20\n30\n40\n50\n150\n1\n2\n3\n" > /tmp/globals_arrays-expected.txt; \
+	diff /tmp/arm64-globals_arrays-out.txt /tmp/globals_arrays-expected.txt && echo "PASS" || echo "FAIL"
+
+test-arm64: test-arm64-counter test-arm64-scope test-arm64-pascal test-arm64-pointer test-arm64-dptr test-arm64-sprintf test-arm64-datatypes test-arm64-multi_sprintf test-arm64-control_flow test-arm64-operators test-arm64-functions test-arm64-globals_arrays
 	@echo "=== all ARM64 tests pass ==="
 
 test-stack:
 	@echo "=== stack allocation intensive tests ==="
 	bash examples/test_stack.sh
 
-test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-sprintf test-datatypes test-multi_sprintf test-control_flow test-operators test-functions test-arm64 test-stack
+test-full: test-c-to-asm test-counter test-scope test-pascal test-pointer test-dptr test-sprintf test-datatypes test-multi_sprintf test-control_flow test-operators test-functions test-globals_arrays test-arm64 test-stack
 	@echo "=== all tests pass ==="
 
 test: test-full
