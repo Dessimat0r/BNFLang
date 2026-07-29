@@ -559,71 +559,122 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
                 for mem in struct_defs[st_type]:
                     sline = re.sub(rf'\b{var_name}\.{mem}\b', f"{var_name}_{mem}", sline)
 
-        # Normalize printf calls
-        m3 = re.match(r'^printf\s*\(\s*"[^"]*%d[^"]*%d[^"]*%d[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
-        if m3:
-            v1 = get_tmp_var(m3.group(1), raw_lines)
-            v2 = get_tmp_var(m3.group(2), raw_lines)
-            v3 = get_tmp_var(m3.group(3), raw_lines)
-            raw_lines.append(f"print3 {v1} {v2} {v3};")
+        # Normalize printf calls into CALL printf, fmt, args...
+        m_pf = re.match(r'^printf\s*\(\s*"([^"]*)"\s*(?:,\s*(.*))?\)\s*;', sline)
+        if m_pf:
+            fmt = m_pf.group(1)
+            args_str = m_pf.group(2) or ""
+            fmt_lbl = "fmt"
+            if fmt == "%d\\n":
+                fmt_lbl = "fmt"
+            elif fmt == "%d ":
+                fmt_lbl = "fmtn"
+            elif fmt == "\\n":
+                fmt_lbl = "fmt_nl"
+            elif fmt == " ":
+                fmt_lbl = "fmt_sp"
+            elif "%d %d\\n" in fmt:
+                fmt_lbl = "fmt_2d"
+            elif "%d %d %d\\n" in fmt:
+                fmt_lbl = "fmt_3d"
+
+            if args_str:
+                args = [get_tmp_var(a.strip(), raw_lines) for a in args_str.split(",") if a.strip()]
+                raw_lines.append(f"CALL printf {fmt_lbl} " + " ".join(args) + ";")
+            else:
+                raw_lines.append(f"CALL printf {fmt_lbl};")
             continue
 
-        m2 = re.match(r'^printf\s*\(\s*"[^"]*%d[^"]*%d[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
-        if m2:
-            v1 = get_tmp_var(m2.group(1), raw_lines)
-            v2 = get_tmp_var(m2.group(2), raw_lines)
-            raw_lines.append(f"print2 {v1} {v2};")
+        # Normalize sprintf calls into CALL sprintf, buf, fmt, args...
+        m_spf = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"([^"]*)"\s*(?:,\s*(.*))?\)\s*;', sline)
+        if m_spf:
+            buf = m_spf.group(1)
+            fmt = m_spf.group(2)
+            args_str = m_spf.group(3) or ""
+            fmt_lbl = "fmt"
+            if "%d %d %d" in fmt:
+                fmt_lbl = "fmt_3d"
+            elif "%d %d" in fmt:
+                fmt_lbl = "fmt_2d"
+
+            if args_str:
+                args = [get_tmp_var(a.strip(), raw_lines) for a in args_str.split(",") if a.strip()]
+                raw_lines.append(f"CALL sprintf {buf} {fmt_lbl} " + " ".join(args) + ";")
+            else:
+                raw_lines.append(f"CALL sprintf {buf} {fmt_lbl};")
             continue
 
-        m = re.match(r'^printf\s*\(\s*"%d\\n"\s*,\s*(.*?)\s*\)\s*;', sline)
-        if m:
-            raw_lines.append(f"print {m.group(1)};")
+        # Normalize legacy print statements
+        m_p3 = re.match(r'^print3\s+(.*?)\s+(.*?)\s+(.*?)\s*;', sline)
+        if m_p3:
+            raw_lines.append(f"CALL printf fmt_3d {m_p3.group(1)} {m_p3.group(2)} {m_p3.group(3)};")
+            continue
+        m_p2 = re.match(r'^print2\s+(.*?)\s+(.*?)\s*;', sline)
+        if m_p2:
+            raw_lines.append(f"CALL printf fmt_2d {m_p2.group(1)} {m_p2.group(2)};")
+            continue
+        m_pr = re.match(r'^print\s+(.*?)\s*;', sline)
+        if m_pr:
+            raw_lines.append(f"CALL printf fmt {m_pr.group(1)};")
+            continue
+        m_prn = re.match(r'^printn\s+(.*?)\s*;', sline)
+        if m_prn:
+            raw_lines.append(f"CALL printf fmtn {m_prn.group(1)};")
+            continue
+        if sline == "println;":
+            raw_lines.append("CALL printf fmt_nl;")
+            continue
+        if sline == "printsp;":
+            raw_lines.append("CALL printf fmt_sp;")
             continue
 
-        m = re.match(r'^printf\s*\(\s*"%d "\s*,\s*(.*?)\s*\)\s*;', sline)
-        if m:
-            raw_lines.append(f"printn {m.group(1)};")
+        # Normalize legacy sprintf statements
+        m_sp3 = re.match(r'^sprintf3\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s+(.*?)\s*;', sline)
+        if m_sp3:
+            raw_lines.append(f"CALL sprintf {m_sp3.group(1)} fmt_3d {m_sp3.group(2)} {m_sp3.group(3)} {m_sp3.group(4)};")
+            continue
+        m_sp2 = re.match(r'^sprintf2\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s*;', sline)
+        if m_sp2:
+            raw_lines.append(f"CALL sprintf {m_sp2.group(1)} fmt_2d {m_sp2.group(2)} {m_sp2.group(3)};")
+            continue
+        m_sp1 = re.match(r'^sprintf\s+([a-zA-Z_]\w*)\s+(.*?)\s*;', sline)
+        if m_sp1:
+            raw_lines.append(f"CALL sprintf {m_sp1.group(1)} fmt {m_sp1.group(2)};")
             continue
 
-        m = re.match(r'^printf\s*\(\s*"\\n"\s*\)\s*;', sline)
-        if m:
-            raw_lines.append("println;")
+        # Normalize legacy call0..3 statements
+        m_c3 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call3\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s+(.*?)\s*;', sline)
+        if m_c3:
+            dest, func, a1, a2, a3 = m_c3.group(1), m_c3.group(2), m_c3.group(3), m_c3.group(4), m_c3.group(5)
+            if dest:
+                raw_lines.append(f"{dest} = CALL {func} {a1} {a2} {a3};")
+            else:
+                raw_lines.append(f"CALL {func} {a1} {a2} {a3};")
             continue
-
-        m = re.match(r'^printf\s*\(\s*" "\s*\)\s*;', sline)
-        if m:
-            raw_lines.append("printsp;")
+        m_c2 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call2\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s*;', sline)
+        if m_c2:
+            dest, func, a1, a2 = m_c2.group(1), m_c2.group(2), m_c2.group(3), m_c2.group(4)
+            if dest:
+                raw_lines.append(f"{dest} = CALL {func} {a1} {a2};")
+            else:
+                raw_lines.append(f"CALL {func} {a1} {a2};")
             continue
-
-        m = re.match(r'^printf\s*\(\s*"%d"\s*,\s*(.*?)\s*\)\s*;', sline)
-        if m:
-            raw_lines.append(f"printn {m.group(1)};")
+        m_c1 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call1\s+([a-zA-Z_]\w*)\s+(.*?)\s*;', sline)
+        if m_c1:
+            dest, func, a1 = m_c1.group(1), m_c1.group(2), m_c1.group(3)
+            if dest:
+                raw_lines.append(f"{dest} = CALL {func} {a1};")
+            else:
+                raw_lines.append(f"CALL {func} {a1};")
             continue
-
-        # Normalize sprintf calls
-        sm3 = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
-        if sm3:
-            buf = sm3.group(1)
-            v1 = get_tmp_var(sm3.group(2), raw_lines)
-            v2 = get_tmp_var(sm3.group(3), raw_lines)
-            v3 = get_tmp_var(sm3.group(4), raw_lines)
-            raw_lines.append(f"sprintf3 {buf} {v1} {v2} {v3};")
+        m_c0 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call0\s+([a-zA-Z_]\w*)\s*;', sline)
+        if m_c0:
+            dest, func = m_c0.group(1), m_c0.group(2)
+            if dest:
+                raw_lines.append(f"{dest} = CALL {func};")
+            else:
+                raw_lines.append(f"CALL {func};")
             continue
-
-        sm2 = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"[^"]*"\s*,\s*(.*?)\s*,\s*(.*?)\s*\)\s*;', sline)
-        if sm2:
-            buf = sm2.group(1)
-            v1 = get_tmp_var(sm2.group(2), raw_lines)
-            v2 = get_tmp_var(sm2.group(3), raw_lines)
-            raw_lines.append(f"sprintf2 {buf} {v1} {v2};")
-            continue
-
-        m = re.match(r'^sprintf\s*\(\s*([a-zA-Z_]\w*)\s*,\s*"%d"\s*,\s*(.*?)\s*\)\s*;', sline)
-        if m:
-            raw_lines.append(f"sprintf {m.group(1)} {m.group(2)};")
-            continue
-
-        raw_lines.append(sline)
 
     # Separate declarations vs statements to hoist all decls to top
     decls = []

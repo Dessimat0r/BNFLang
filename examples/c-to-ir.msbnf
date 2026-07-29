@@ -81,40 +81,13 @@ Stmt ::=
   | Var:v "=" "_param2;" => "PARAM2 " + v
   | Var:v "=" "_param3;" => "PARAM3 " + v
   | Var:v "=" "_param4;" => "PARAM4 " + v
-  // Function calls (assigned)
-  | Var:dest "=" "call3" $IDENT:func Var:v1 Var:v2 Var:v3 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "CALL_DEST3 " + dest + " = " + func + " " + a1 + " " + a2 + " " + a3
-  | Var:dest "=" "call2" $IDENT:func Var:v1 Var:v2 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); "CALL_DEST2 " + dest + " = " + func + " " + a1 + " " + a2
-  | Var:dest "=" "call1" $IDENT:func /[^;\x00]+/:v1 ";"
-    => let a1 = RULE("Expr", v1); "CALL_DEST1 " + dest + " = " + func + " " + a1
-  | Var:dest "=" "call0" $IDENT:func ";"
-    => "CALL_DEST0 " + dest + " = " + func
-  // Function calls (void)
-  | "call3" $IDENT:func Var:v1 Var:v2 Var:v3 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "CALL3 " + func + " " + a1 + " " + a2 + " " + a3
-  | "call2" $IDENT:func Var:v1 Var:v2 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); "CALL2 " + func + " " + a1 + " " + a2
-  | "call1" $IDENT:func /[^)\x00\s]+/:v1
-    => let a1 = RULE("Expr", v1); "CALL1 " + func + " " + a1
-  | "call0" $IDENT:func ";" => "CALL0 " + func
-  // Standard I/O / Print helpers
-  | "print3" Var:v1 Var:v2 Var:v3 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "PRINT3 fmt_3d " + a1 + " " + a2 + " " + a3
-  | "print2" Var:v1 Var:v2 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); "PRINT2 fmt_2d " + a1 + " " + a2
-  | "sprintf3" Var:buf Var:v1 Var:v2 Var:v3 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); "SPRINTF3 " + buf + " fmt_3d " + a1 + " " + a2 + " " + a3
-  | "sprintf2" Var:buf Var:v1 Var:v2 ";"
-    => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); "SPRINTF2 " + buf + " fmt_2d " + a1 + " " + a2
-  | "sprintf" Var:buf Var:val ";"
-    => let val_ir = RULE("Expr", val); "SPRINTF " + buf + " fmt " + val_ir
-%for kw, fmt in [("println", "fmt_nl"), ("printsp", "fmt_sp")] {
-  | "{kw}" ";" => "PRINT0 {fmt}"
-}
-%for kw, fmt in [("printn", "fmtn"), ("print", "fmt")] {
-  | "{kw}" /[^;]+/:val ";" => let val_ir = RULE("Expr", val); "PRINT1 {fmt} " + val_ir
-}
+  // Function calls
+  | Var:dest "=" "CALL " $IDENT:func /[^;]+/:args ";"
+    => "CALL_DEST " + dest + " = " + func + " " + args
+  | "CALL " $IDENT:func /[^;]+/:args ";"
+    => "CALL " + func + " " + args
+  | "CALL " $IDENT:func ";"
+    => "CALL " + func
   // Pointers & Assignments
   | "_aptr" /[^=]+/:name "=" /[^;]+/:val ";"
     => let val_ir = RULE("Expr", val); "STORE_PTR_VAR _aptr" + name + " = " + val_ir
@@ -178,13 +151,8 @@ MulExpr ::= $NO_MUL:l "*" "0" => "0"
 Primary ::= "(" $PAREN:e ")" /[\s]*/ => RULE("Expr", e)
           | "&" Var:name => "ADDR " + name
           | "*" PtrChain:inner => "DEREF " + inner
-          | "call3" $IDENT:func Var:v1 Var:v2 Var:v3
-            => "CALL_VAL3 " + func + " " + RULE("Expr", v1) + " " + RULE("Expr", v2) + " " + RULE("Expr", v3)
-          | "call2" $IDENT:func Var:v1 Var:v2
-            => "CALL_VAL2 " + func + " " + RULE("Expr", v1) + " " + RULE("Expr", v2)
-          | "call1" $IDENT:func /[^)\x00\s]+/:v1
-            => "CALL_VAL1 " + func + " " + RULE("Expr", v1)
-          | "call0" $IDENT:func => "CALL_VAL0 " + func
+          | "CALL " $IDENT:func /[^)\x00\s]+/:args => "CALL_VAL " + func + " " + args
+          | "CALL " $IDENT:func => "CALL_VAL " + func
           | "0" /[\s]*/ => "0"
           | Num:n => n
           | "G_" $IDENT:gname /[\s]*/ => "G_" + gname
