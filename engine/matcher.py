@@ -34,15 +34,14 @@ def _rule(g, name, text, pos, state, scope):
                 if _is_catchall(alt):
                     fallback_r, fallback_p, fallback_state = r, p, dict(state)
                 else:
-                    cost = str(r).count('\n')
-                    if best_r is None or p > best_p or (p == best_p and cost < best_cost):
-                        best_r, best_p, best_cost, best_state = r, p, cost, dict(state)
+                    if best_r is None or p > best_p:
+                        best_r, best_p, best_state = r, p, dict(state)
+        if fallback_r is not None and (best_p is None or fallback_p > best_p):
+            state.clear(); state.update(fallback_state)
+            return fallback_r, fallback_p
         if best_r is not None:
             state.clear(); state.update(best_state)
             return best_r, best_p
-        if fallback_r is not None:
-            state.clear(); state.update(fallback_state)
-            return fallback_r, fallback_p
         state.clear(); state.update(saved)
         return None, None
     for alt in rule.alts:
@@ -156,6 +155,23 @@ def eval_node(node, scope, state):
                         return str(i)
                 i += 1
             return str(len(text))
+        if fn == 'STRIP_OUTER_PARENS':
+            s = str(args[0]).strip() if args else ''
+            while s.startswith('(') and s.endswith(')'):
+                depth = 0
+                balanced = True
+                for c in s[:-1]:
+                    if c == '(': depth += 1
+                    elif c == ')':
+                        depth -= 1
+                        if depth == 0:
+                            balanced = False
+                            break
+                if balanced and depth == 1:
+                    s = s[1:-1].strip()
+                else:
+                    break
+            return s
         if fn == 'CEIL16':
             val = int(str(args[0])) if args else 0
             return str(((val + 15) // 16) * 16)

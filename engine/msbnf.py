@@ -4,12 +4,13 @@ import ast
 
 BUILTIN_ALIASES = {
     "$DECL_HDR": r'/[0-9]+/:n "\x00" /[^\x00]*/:i "\x00" /(?:long\s+long|char|short|int|long|void)\s*/',
-    "$NO_MUL":  r"/(?:\([^)]*\)|[^*\/%;\x00])+/",
-    "$NO_ADD":  r"/(?:\([^)]*\)|[^+\-;\x00])+/",
-    "$NO_COMP": r"/(?:\([^)]*\)|[^<>=!;\x00])+/",
-    "$PAREN":   r"/[^)]*/",
+    "$NO_MUL":  r"/(?:\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)|[^*\/%;\x00])+/",
+    "$NO_ADD":  r"/(?:\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)|[^+\-;\x00])+/",
+    "$NO_COMP": r"/(?:\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)|[^<>=!;\x00])+/",
+    "$PAREN":   r"/(?:\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)|[^()])+/",
+    "$NO_BIT":  r"/(?:\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)|[^&|^<>;\x00])+/",
     "$VAR_OFF": r'/[^@]+/:name "@" /[0-9]+/:off',
-    "$VAR":     r"/[a-zA-Z_@0-9]+/",
+    "$VAR":     r"/[^@]+/",
     "$NUM":     r"/[0-9]+/",
 }
 
@@ -160,15 +161,12 @@ def expand_for_loops(text):
     i = 0
     while i < len(lines):
         line = lines[i]
-        m = re.match(r'^\s*%for\s+([a-zA-Z0-9_,\s]+)\s+in\s+(\[.*?\]|range\(.*?\))\s*\{', line.strip())
+        m = re.match(r'^\s*%for\s+([a-zA-Z0-9_,\s]+)\s+in\s+(.+?)\s*\{', line.strip())
         if m:
             var_names = [v.strip() for v in m.group(1).split(",") if v.strip()]
-            items_str = m.group(2)
+            items_str = m.group(2).strip()
             try:
-                if items_str.startswith("range("):
-                    items = list(eval(items_str))
-                else:
-                    items = ast.literal_eval(items_str)
+                items = list(eval(items_str))
             except Exception as e:
                 raise ValueError(f"Failed to parse %for items on line {i+1}: {items_str}") from e
 

@@ -74,28 +74,28 @@ run_test() {
 }
 
 # 1. Many local variables test
-run_test "stack1_many_vars" "examples/stack1.c" "42"
+run_test "stack1_many_vars" "examples/stack1.c" "$(printf "1\n2\n3\n4\n5\n6\n7\n8\n10\n26")"
 
 # 2. Cross-scope local variables test
-run_test "stack2_cross_scope" "examples/stack2.c" "100"
+run_test "stack2_cross_scope" "examples/stack2.c" "$(printf "30\n50\n110\n30\n50\n110\n-20\n130")"
 
 # 3. Complex expression stack usage test
-run_test "stack3_complex_expr" "examples/stack3.c" "777"
+run_test "stack3_complex_expr" "examples/stack3.c" "$(printf "679\n79\n824\n99\n33\n20\n268")"
 
 # 4. Triple nested loop stack usage test
-run_test "stack4_triple_loop" "examples/stack4.c" "1000"
+run_test "stack4_triple_loop" "examples/stack4.c" "$(printf "27\n3\n3\n3")"
 
 # 5. Pointer layout & stack address arithmetic test
-run_test "stack5_ptr_layout" "examples/stack5.c" "555"
+run_test "stack5_ptr_layout" "examples/stack5.c" "$(printf "5\n10\n10\n10\n42\n42\n10\n99\n99")"
 
 # 6. Recursive stack frame test (Fibonacci 10)
-run_test "stack6_fibonacci" "examples/stack6.c" "55"
+run_test "stack6_fibonacci" "examples/stack6.c" "$(printf "143\n55\n89")"
 
 # 7. Multi-operand arithmetic stack test
-run_test "stack7_multi_arith" "examples/stack7.c" "1234"
+run_test "stack7_multi_arith" "examples/stack7.c" "$(printf "26\n45\n-14\n70\n27\n120\n30")"
 
 # 8. Integer division & modulo stack test
-run_test "stack8_division" "examples/stack8.c" "7"
+run_test "stack8_division" "examples/stack8.c" "$(printf "7\n16\n19\n12\n10\n23\n8")"
 
 echo ""
 echo "=================================="

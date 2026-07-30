@@ -286,15 +286,27 @@ def desugar_function_calls(src, known_funcs):
             out_lines.append(line)
             continue
 
+        # Helper to format args and hoist complex expressions
+        def process_args(args_str):
+            global tmp_counter
+            raw_args = [a.strip() for a in args_str.split(',') if a.strip()]
+            clean_args = []
+            for a in raw_args:
+                if re.match(r'^[a-zA-Z_]\w*$|^[0-9]+$', a):
+                    clean_args.append(a)
+                else:
+                    tmp_counter += 1
+                    tvar = f"_arg{tmp_counter}"
+                    out_lines.append(f"int {tvar} = {a};")
+                    clean_args.append(tvar)
+            return len(clean_args), " ".join(clean_args)
+
         # If it's a standalone assignment: [type] var = fname(args);
         m_assign = re.match(r'^(?:(?:int|char|short|long|void)\s+\*?\s*)?([a-zA-Z_]\w*)\s*=\s*([a-zA-Z_]\w*)\s*\(([^()]*)\)\s*;$', sline)
         if m_assign and m_assign.group(2) in known_funcs:
             var_lhs = line[:line.find('=')].strip()
             fname = m_assign.group(2)
-            args_str = m_assign.group(3).strip()
-            args = [a.strip() for a in args_str.split(',') if a.strip()]
-            nargs = len(args)
-            args_formatted = " ".join(args)
+            nargs, args_formatted = process_args(m_assign.group(3).strip())
             if nargs == 0:
                 out_lines.append(f"{var_lhs} = call0 {fname};")
             else:
@@ -305,10 +317,7 @@ def desugar_function_calls(src, known_funcs):
         m_stmt = re.match(r'^([a-zA-Z_]\w*)\s*\(([^()]*)\)\s*;$', sline)
         if m_stmt and m_stmt.group(1) in known_funcs:
             fname = m_stmt.group(1)
-            args_str = m_stmt.group(2).strip()
-            args = [a.strip() for a in args_str.split(',') if a.strip()]
-            nargs = len(args)
-            args_formatted = " ".join(args)
+            nargs, args_formatted = process_args(m_stmt.group(2).strip())
             if nargs == 0:
                 out_lines.append(f"call0 {fname};")
             else:
@@ -320,10 +329,7 @@ def desugar_function_calls(src, known_funcs):
         newline_expr = sline
         for m in reversed(matches):
             fname = m.group(1)
-            args_str = m.group(2).strip()
-            args = [a.strip() for a in args_str.split(',') if a.strip()]
-            nargs = len(args)
-            args_formatted = " ".join(args)
+            nargs, args_formatted = process_args(m.group(2).strip())
 
             tmp_counter += 1
             tmp_var = f"_fn{tmp_counter}"
@@ -573,10 +579,10 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
                 fmt_lbl = "fmt_nl"
             elif fmt == " ":
                 fmt_lbl = "fmt_sp"
-            elif "%d %d\\n" in fmt:
-                fmt_lbl = "fmt_2d"
             elif "%d %d %d\\n" in fmt:
                 fmt_lbl = "fmt_3d"
+            elif "%d %d\\n" in fmt:
+                fmt_lbl = "fmt_2d"
 
             if args_str:
                 args = [get_tmp_var(a.strip(), raw_lines) for a in args_str.split(",") if a.strip()]
@@ -643,38 +649,40 @@ def preprocess_sbnfc(src, processed_includes=None, typedefs=None, struct_defs=No
             continue
 
         # Normalize legacy call0..3 statements
-        m_c3 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call3\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s+(.*?)\s*;', sline)
+        m_c3 = re.match(r'^(?:(.*?)\s*=\s*)?call3\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s+(.*?)\s*;', sline)
         if m_c3:
             dest, func, a1, a2, a3 = m_c3.group(1), m_c3.group(2), m_c3.group(3), m_c3.group(4), m_c3.group(5)
             if dest:
-                raw_lines.append(f"{dest} = CALL {func} {a1} {a2} {a3};")
+                raw_lines.append(f"{dest.strip()} = CALL {func} {a1} {a2} {a3};")
             else:
                 raw_lines.append(f"CALL {func} {a1} {a2} {a3};")
             continue
-        m_c2 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call2\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s*;', sline)
+        m_c2 = re.match(r'^(?:(.*?)\s*=\s*)?call2\s+([a-zA-Z_]\w*)\s+(.*?)\s+(.*?)\s*;', sline)
         if m_c2:
             dest, func, a1, a2 = m_c2.group(1), m_c2.group(2), m_c2.group(3), m_c2.group(4)
             if dest:
-                raw_lines.append(f"{dest} = CALL {func} {a1} {a2};")
+                raw_lines.append(f"{dest.strip()} = CALL {func} {a1} {a2};")
             else:
                 raw_lines.append(f"CALL {func} {a1} {a2};")
             continue
-        m_c1 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call1\s+([a-zA-Z_]\w*)\s+(.*?)\s*;', sline)
+        m_c1 = re.match(r'^(?:(.*?)\s*=\s*)?call1\s+([a-zA-Z_]\w*)\s+(.*?)\s*;', sline)
         if m_c1:
             dest, func, a1 = m_c1.group(1), m_c1.group(2), m_c1.group(3)
             if dest:
-                raw_lines.append(f"{dest} = CALL {func} {a1};")
+                raw_lines.append(f"{dest.strip()} = CALL {func} {a1};")
             else:
                 raw_lines.append(f"CALL {func} {a1};")
             continue
-        m_c0 = re.match(r'^(?:([a-zA-Z_]\w*)\s*=\s*)?call0\s+([a-zA-Z_]\w*)\s*;', sline)
+        m_c0 = re.match(r'^(?:(.*?)\s*=\s*)?call0\s+([a-zA-Z_]\w*)\s*;', sline)
         if m_c0:
             dest, func = m_c0.group(1), m_c0.group(2)
             if dest:
-                raw_lines.append(f"{dest} = CALL {func};")
+                raw_lines.append(f"{dest.strip()} = CALL {func};")
             else:
                 raw_lines.append(f"CALL {func};")
             continue
+
+        raw_lines.append(sline)
 
     # Separate declarations vs statements to hoist all decls to top
     decls = []

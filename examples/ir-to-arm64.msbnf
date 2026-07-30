@@ -13,11 +13,10 @@ Line ::= "GLOBAL" $IDENT:gname $NUM:val
   | "FUNC" $IDENT:fname => ".globl " + fname + "\n" + fname + ":"
   | "FRAME" $NUM:sz => "stp x29, x30, [sp, #-16]!\nmov x29, sp\nsub sp, sp, #" + sz
   | "END_FUNC" => "mov sp, x29\nldp x29, x30, [sp], #16\nret"
-  | "INIT_PTR" $VAR:v "@" $NUM:off " = &" $VAR:ref "@" $NUM:ref_off => "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + off + "]"
-  | "INIT_PTR" $VAR:v "@" $NUM:off " = 0" => "str xzr, [x29, #-" + off + "]"
+  | "INIT_PTR" $VAR:v "@" $NUM:off "=" "&" $VAR:ref "@" $NUM:ref_off => "sub x16, x29, #" + ref_off + "\nstr x16, [x29, #-" + off + "]"
+  | "INIT_PTR" $VAR:v "@" $NUM:off "=" "0" => "str xzr, [x29, #-" + off + "]"
   | "INIT_ZERO" $VAR:v "@" $NUM:off => "str wzr, [x29, #-" + off + "]"
-  | "INIT_VAR" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
-  | "STORE" $VAR:v "@" $NUM:off " = " /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
+  | "INIT_VAR" $VAR:v "@" $NUM:off "=" /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
   | "LABEL" $LABEL:lbl => lbl + ":"
   | "JMP_Z" /[^\n,]+/:cond "," $LABEL:lbl => let c_asm = RULE("Expr", cond); c_asm \+ "cbz w0, " + lbl
   | "JMP_NZ" /[^\n,]+/:cond "," $LABEL:lbl => let c_asm = RULE("Expr", cond); c_asm \+ "cbnz w0, " + lbl
@@ -26,47 +25,49 @@ Line ::= "GLOBAL" $IDENT:gname $NUM:val
 %for i, reg in enumerate(["w0", "w1", "w2", "w3"], 1) {
   | "PARAM{i}" $VAR:v "@" $NUM:off => "str {reg}, [x29, #-" + off + "]"
 }
+  | "STORE_DEREF" "DEREF" $VAR:v "@" $NUM:off "=" /[\s\S]+/:val
+    => let val_asm = RULE("Expr", val); val_asm \+ "str w0, [sp, #-16]!" \+ "ldr x1, [x29, #-" + off + "]" \+ "ldr x1, [x1]" \+ "ldr w0, [sp], #16" \+ "str w0, [x1]"
+  | "STORE_DEREF" $VAR:v "@" $NUM:off "=" /[\s\S]+/:val
+    => let val_asm = RULE("Expr", val); val_asm \+ "str w0, [sp, #-16]!" \+ "ldr x1, [x29, #-" + off + "]" \+ "ldr w0, [sp], #16" \+ "str w0, [x1]"
   | "STORE_GVAR" $IDENT:gname "=" /[\s\S]+/:val
     => let val_asm = RULE("Expr", val); val_asm \+ "adrp x16, _" + gname + "@PAGE" \+ "add x16, x16, _" + gname + "@PAGEOFF" \+ "str w0, [x16]"
   | "STORE_PTR_VAR" "_aptr" /[^=]+/:name "=" /[\s\S]+/:val
     => let val_asm = RULE("Expr", val); let off = RULE("OffOf", "_aptr" + name); val_asm \+ "str x0, [x29, #-" + off + "]"
-  | "STORE_DEREF" /[^\n=]+/:ptr "=" /[\s\S]+/:val
-    => let p_asm = RULE("Expr", ptr); let val_asm = RULE("Expr", val); p_asm \+ "str w0, [sp, #-16]!" \+ val_asm \+ "ldr x1, [sp], #16" \+ "str w0, [x1]"
-  | "CALL_DEST" $VAR:v "@" $NUM:off " = " /[\s\S]+/:args => RULE("CallCode", args) \+ "str w0, [x29, #-" + off + "]"
-  | "CALL" /[\s\S]+/:args => RULE("CallCode", args)
+  | "STORE" $VAR:v "@" $NUM:off "=" /[\s\S]+/:val => STORE_STACK(RULE("Expr", val), off)
+  | "CALL_ASSIGN" $VAR:v "@" $NUM:off "=" /[\s\S]+/:args => RULE("CallCode", args) \+ "str w0, [x29, #-" + off + "]"
+  | "CALL " /[\s\S]+/:args => RULE("CallCode", args)
   | "none" => ""
   | /[\s]*/ => ""
 
-CallCode ::= /[\s]*/ "printf" /[\s]+/ "fmt_3d" /[\s]+/ /[^ ]+/:v1 /[\s]+/ /[^ ]+/:v2 /[\s]+/ /[\s\S]+/:v3
+CallCode ::= /[\s]*/ "printf" "fmt_3d" /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ a3 \+ "str x0, [sp, #16]" \+ "adrp x0, fmt_3d@PAGE" \+ "add x0, x0, fmt_3d@PAGEOFF" \+ "bl _printf"
-  | /[\s]*/ "printf" /[\s]+/ "fmt_2d" /[\s]+/ /[^ ]+/:v1 /[\s]+/ /[\s\S]+/:v2
+  | /[\s]*/ "printf" "fmt_2d" /[^ ]+/:v1 /[\s\S]+/:v2
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ "adrp x0, fmt_2d@PAGE" \+ "add x0, x0, fmt_2d@PAGEOFF" \+ "bl _printf"
-  | /[\s]*/ "printf" /[\s]+/ $IDENT:fmt /[\s]+/ /[\s\S]+/:val
+  | /[\s]*/ "printf" $IDENT:fmt /[\s\S]+/:val
     => let a1 = RULE("Expr", val); a1 \+ "str x0, [sp]" \+ "adrp x0, " + fmt + "@PAGE" \+ "add x0, x0, " + fmt + "@PAGEOFF" \+ "bl _printf"
-  | /[\s]*/ "printf" /[\s]+/ $IDENT:fmt
+  | /[\s]*/ "printf" $IDENT:fmt
     => "adrp x0, " + fmt + "@PAGE" \+ "add x0, x0, " + fmt + "@PAGEOFF" \+ "bl _printf"
-  | /[\s]*/ "sprintf" /[\s]+/ $VAR:v "@" $NUM:off /[\s]+/ "fmt_3d" /[\s]+/ /[^ ]+/:v1 /[\s]+/ /[^ ]+/:v2 /[\s]+/ /[\s\S]+/:v3
+  | /[\s]*/ "sprintf" $VAR:v "@" $NUM:off "fmt_3d" /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ a3 \+ "str x0, [sp, #16]" \+ "sub x0, x29, #" + off \+ "adrp x1, fmt_3d@PAGE" \+ "add x1, x1, fmt_3d@PAGEOFF" \+ "bl _sprintf"
-  | /[\s]*/ "sprintf" /[\s]+/ $VAR:v "@" $NUM:off /[\s]+/ "fmt_2d" /[\s]+/ /[^ ]+/:v1 /[\s]+/ /[\s\S]+/:v2
+  | /[\s]*/ "sprintf" $VAR:v "@" $NUM:off "fmt_2d" /[^ ]+/:v1 /[\s\S]+/:v2
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); a1 \+ "str x0, [sp]" \+ a2 \+ "str x0, [sp, #8]" \+ "sub x0, x29, #" + off \+ "adrp x1, fmt_2d@PAGE" \+ "add x1, x1, fmt_2d@PAGEOFF" \+ "bl _sprintf"
-  | /[\s]*/ "sprintf" /[\s]+/ $VAR:v "@" $NUM:off /[\s]+/ $IDENT:fmt /[\s]+/ /[\s\S]+/:val
+  | /[\s]*/ "sprintf" $VAR:v "@" $NUM:off $IDENT:fmt /[\s\S]+/:val
     => let val_asm = RULE("Expr", val); val_asm \+ "str x0, [sp]" \+ "sub x0, x29, #" + off \+ "adrp x1, " + fmt + "@PAGE" \+ "add x1, x1, " + fmt + "@PAGEOFF" \+ "bl _sprintf"
-  | /[\s]*/ $IDENT:func /[\s]+/ /[^ ]+/:v1 /[\s]+/ /[^ ]+/:v2 /[\s]+/ /[\s\S]+/:v3
+  | /[\s]*/ $IDENT:func /[^ ]+/:v1 /[^ ]+/:v2 /[\s\S]+/:v3
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); let a3 = RULE("Expr", v3); a1 \+ "str w0, [sp, #-16]!" \+ a2 \+ "str w0, [sp, #-16]!" \+ a3 \+ "mov w2, w0" \+ "ldr w1, [sp], #16" \+ "ldr w0, [sp], #16" \+ "bl _" + func
-  | /[\s]*/ $IDENT:func /[\s]+/ /[^ ]+/:v1 /[\s]+/ /[\s\S]+/:v2
+  | /[\s]*/ $IDENT:func /[^ ]+/:v1 /[\s\S]+/:v2
     => let a1 = RULE("Expr", v1); let a2 = RULE("Expr", v2); a1 \+ "str w0, [sp, #-16]!" \+ a2 \+ "mov w1, w0" \+ "ldr w0, [sp], #16" \+ "bl _" + func
-  | /[\s]*/ $IDENT:func /[\s]+/ /[\s\S]+/:v1 => let a1 = RULE("Expr", v1); a1 \+ "bl _" + func
+  | /[\s]*/ $IDENT:func /[\s\S]+/:v1 => let a1 = RULE("Expr", v1); a1 \+ "bl _" + func
   | /[\s]*/ $IDENT:func => "bl _" + func
 
 OffOf ::= $VAR "@" $NUM:off /[\s\S]*/ => off | $IDENT:name /[\s\S]*/ => name
 
-Expr ::= /[\s]*/ "(" /[^)]+/:inner ")" => RULE("OpExpr", inner)
-       | /[\s]*/ /[^ ]+\s+[A-Z0-9]+\s+[\s\S]+/ => RULE("OpExpr", s)
-       | /[\s]*/ /[\s\S]+/:s => RULE("PrimExpr", s)
+Expr ::= /[\s]*/ /[\s\S]+/:s => let clean = STRIP_OUTER_PARENS(s); RULE("OpExpr", clean)
 
-OpExpr ::= /[^ ]+/:l /([A-Z0-9]+)/:op /[\s\S]+/:r
-    => RULE("Expr", l) \+ "str w0, [sp, #-16]!" \+ RULE("Expr", r) \+ "ldr w1, [sp], #16" \+ RULE("OpInst", op)
-  | "NOT" /[\s\S]+/:r => RULE("Expr", r) \+ "mvn w0, w0"
+OpExpr ::= /(?:\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)|(?:DEREF\s+|ADDR\s+)*[^ ]+)+/:l /(?:AND|ORR|EOR|LSL|ASR|EQ|NE|LE|LT|GE|GT|ADD|SUB|MUL|DIV|MOD)/:op /[\s\S]+/:r
+    => let l_asm = RULE("Expr", l); let r_asm = RULE("Expr", r); l_asm \+ "str x0, [sp, #-16]!" \+ r_asm \+ "ldr x1, [sp], #16" \+ RULE("OpInst", op)
+  | "NOT" /[\s\S]+/:r => let r_asm = RULE("Expr", r); r_asm \+ "mvn w0, w0"
+  | /[\s\S]+/:s => RULE("PrimExpr", s)
 
 OpInst ::= "AND" => "and w0, w1, w0"
          | "ORR" => "orr w0, w1, w0"
